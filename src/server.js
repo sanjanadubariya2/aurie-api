@@ -15,6 +15,13 @@ import adminRouter from './routes/admin.js'
 
 const app = express()
 
+// Railway (and most PaaS hosts) sit one reverse-proxy hop in front of this
+// app and set X-Forwarded-For to the real client IP. Trusting exactly that
+// one hop lets express-rate-limit key on the actual visitor instead of
+// Railway's proxy IP — without it, every visitor shares one rate-limit
+// bucket, so a few people hitting the OTP endpoint locks everyone out.
+app.set('trust proxy', 1)
+
 app.use(helmet())
 app.use(
   cors({
