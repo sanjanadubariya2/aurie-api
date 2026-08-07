@@ -21,6 +21,13 @@ async function sendViaSmtp({ to, subject, html }) {
       port: config.email.smtp.port,
       secure: config.email.smtp.port === 465,
       auth: { user: config.email.smtp.user, pass: config.email.smtp.pass },
+      // Some hosts silently drop outbound SMTP connections instead of
+      // refusing them (to deter spam), which without a timeout hangs the
+      // whole request — and the OTP endpoint that calls this — forever.
+      // Fail loudly in 10s instead so the caller gets a real error.
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 10_000,
     })
   }
   await smtpTransport.sendMail({ from: config.email.from, to, subject, html })
