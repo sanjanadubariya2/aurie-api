@@ -45,10 +45,14 @@ const orderSchema = new mongoose.Schema(
     total: { type: Number, required: true },
     payment: {
       method: { type: String, enum: ['upi', 'cod'], required: true },
-      status: { type: String, enum: ['pending', 'paid', 'failed', 'collected'], default: 'pending' },
-      razorpayOrderId: String,
-      razorpayPaymentId: String,
     },
+    // Razorpay's own view of the money — separate from `status` below, which
+    // is the fulfilment/delivery lifecycle. A COD order can be `placed` while
+    // staying `paymentStatus: 'pending'` forever; that's expected, COD never
+    // touches this.
+    paymentStatus: { type: String, enum: ['pending', 'paid', 'failed'], default: 'pending' },
+    razorpayOrderId: { type: String, index: true },
+    razorpayPaymentId: String,
     status: { type: String, enum: STATUSES, default: 'placed', index: true },
     statusHistory: [{ status: String, at: Date, by: String }],
     courier: String,

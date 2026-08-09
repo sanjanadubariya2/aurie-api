@@ -37,9 +37,24 @@ export const config = {
       templateId: process.env.MSG91_TEMPLATE_ID || '',
       senderId: process.env.MSG91_SENDER_ID || 'AURIE',
     },
+    // Fast2SMS's "Smart OTP" route — the one that supports WhatsApp delivery
+    // (with optional SMS fallback) through a single send call. `otpId`
+    // identifies which channel/template to use; it's generated in their
+    // dashboard's Smart OTP section when you assign an approved WhatsApp
+    // template to it, and can't be derived from the API key alone.
     fast2sms: {
       apiKey: process.env.FAST2SMS_API_KEY || '',
+      otpId: process.env.FAST2SMS_OTP_ID || '',
     },
+  },
+
+  // Meta's WhatsApp Cloud API — a free-tier alternative to MSG91 that skips
+  // India's DLT registration wait entirely. Set SMS_PROVIDER=whatsapp to use it.
+  whatsappApi: {
+    accessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
+    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+    templateName: process.env.WHATSAPP_TEMPLATE_NAME || 'otp_verification',
+    languageCode: process.env.WHATSAPP_TEMPLATE_LANG || 'en_US',
   },
 
   razorpay: {
@@ -58,9 +73,13 @@ export const config = {
   whatsapp: process.env.WHATSAPP || '919769469765',
 }
 
+export const isWhatsAppOtpLive = Boolean(
+  config.sms.provider === 'whatsapp' && config.whatsappApi.accessToken && config.whatsappApi.phoneNumberId,
+)
 export const isSmsLive = Boolean(
   (config.sms.provider === 'msg91' && config.sms.msg91.authKey) ||
-    (config.sms.provider === 'fast2sms' && config.sms.fast2sms.apiKey),
+    (config.sms.provider === 'fast2sms' && config.sms.fast2sms.apiKey && config.sms.fast2sms.otpId) ||
+    isWhatsAppOtpLive,
 )
 export const isRazorpayLive = Boolean(config.razorpay.keyId && config.razorpay.keySecret)
 export const isCloudinaryLive = Boolean(

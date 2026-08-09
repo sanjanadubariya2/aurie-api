@@ -252,7 +252,10 @@ router.get(
   asyncHandler(async (req, res) => {
     const DAYS = 14
     const since = new Date(Date.now() - DAYS * 86_400_000)
-    const paid = { 'payment.status': { $in: ['paid', 'collected'] } }
+    // Counts as revenue: a Razorpay-verified payment, or a COD order (which
+    // has no Razorpay-verified paymentStatus to check — COD is cash on the
+    // doorstep, not something this app watches get paid).
+    const paid = { $or: [{ paymentStatus: 'paid' }, { 'payment.method': 'cod' }] }
 
     const recentCount = await Order.countDocuments({ ...paid, createdAt: { $gte: since } })
     const basis = recentCount > 0 ? { ...paid, createdAt: { $gte: since } } : paid
@@ -266,7 +269,11 @@ router.get(
         {
           $group: {
             _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-            revenue: { $sum: { $cond: [{ $in: ['$payment.status', ['paid', 'collected']] }, '$total', 0] } },
+            revenue: {
+              $sum: {
+                $cond: [{ $or: [{ $eq: ['$paymentStatus', 'paid'] }, { $eq: ['$payment.method', 'cod'] }] }, '$total', 0],
+              },
+            },
             orders: { $sum: 1 },
           },
         },

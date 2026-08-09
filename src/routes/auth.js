@@ -6,7 +6,7 @@ import { issueOtp, verifyOtp } from '../services/otp.js'
 import { sendOtpEmail, sendPhoneOtpFallbackEmail } from '../services/mailer.js'
 import { sendOtpSms } from '../services/sms.js'
 import { signToken } from '../services/token.js'
-import { isSmsLive } from '../config.js'
+import { isSmsLive, isWhatsAppOtpLive } from '../config.js'
 import { publicCustomer } from '../lib/serialize.js'
 import { requireAuth } from '../middleware/requireAuth.js'
 import { validateBody } from '../middleware/validate.js'
@@ -71,16 +71,21 @@ router.post(
   asyncHandler(async (req, res) => {
     const { phone } = req.body
     const code = await issueOtp(phone, 'sms')
-    // No SMS provider configured yet — the code still has to reach the
-    // customer somewhere, so it goes to their (already-verified) email
+    // No SMS/WhatsApp provider configured yet — the code still has to reach
+    // the customer somewhere, so it goes to their (already-verified) email
     // instead of only a server console nobody but a developer can see.
-    // Switches to real SMS automatically the moment SMS_PROVIDER is set.
-    if (isSmsLive) {
+    // Switches to real delivery automatically the moment SMS_PROVIDER is set.
+    let channel = 'email'
+    if (isWhatsAppOtpLive) {
       await sendOtpSms(phone, code)
+      channel = 'whatsapp'
+    } else if (isSmsLive) {
+      await sendOtpSms(phone, code)
+      channel = 'sms'
     } else {
       await sendPhoneOtpFallbackEmail(req.customer.email, phone, code)
     }
-    res.json({ sent: true, channel: isSmsLive ? 'sms' : 'email' })
+    res.json({ sent: true, channel })
   }),
 )
 
