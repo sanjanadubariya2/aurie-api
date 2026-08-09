@@ -9,7 +9,12 @@ async function sendViaResend({ to, subject, html }) {
     const { Resend } = await import('resend')
     resendClient = new Resend(config.email.resendApiKey)
   }
-  await resendClient.emails.send({ from: config.email.from, to, subject, html })
+  // The Resend SDK does not throw on an API-level rejection (unverified
+  // domain, invalid from-address, etc.) — it resolves with { data, error }.
+  // Ignoring `error` here meant every failed send was reported to the
+  // customer as a success.
+  const { error } = await resendClient.emails.send({ from: config.email.from, to, subject, html })
+  if (error) throw new Error(`Resend rejected the email: ${error.message || JSON.stringify(error)}`)
 }
 
 let smtpTransport
