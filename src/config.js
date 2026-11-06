@@ -71,6 +71,22 @@ export const config = {
   },
 
   whatsapp: process.env.WHATSAPP || '919769469765',
+
+  // Google Gemini for the AI helpers. Model ids change every few months, so
+  // they are settings, not code. Blank key = AI features hidden.
+  ai: {
+    geminiApiKey: process.env.GEMINI_API_KEY || '',
+    model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+    visionModel: process.env.GEMINI_VISION_MODEL || process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+    dailyCallCap: Number(process.env.AI_DAILY_CALL_CAP || 2000),
+  },
+
+  // Who hears about new custom-quote requests. Defaults to the SMTP mailbox.
+  notifyEmail: process.env.ADMIN_NOTIFY_EMAIL || process.env.SMTP_USER || '',
+
+  // Where links in emails point (quote ready, order updates).
+  storefrontUrl: (process.env.STOREFRONT_URL || 'https://www.aurie.website').replace(/\/$/, ''),
+  adminUrl: (process.env.ADMIN_URL || 'https://admin.aurie.website').replace(/\/$/, ''),
 }
 
 export const isWhatsAppOtpLive = Boolean(
@@ -81,6 +97,7 @@ export const isSmsLive = Boolean(
     (config.sms.provider === 'fast2sms' && config.sms.fast2sms.apiKey && config.sms.fast2sms.otpId) ||
     isWhatsAppOtpLive,
 )
+export const isAiLive = Boolean(config.ai.geminiApiKey)
 export const isRazorpayLive = Boolean(config.razorpay.keyId && config.razorpay.keySecret)
 export const isCloudinaryLive = Boolean(
   config.cloudinary.cloudName && config.cloudinary.apiKey && config.cloudinary.apiSecret,

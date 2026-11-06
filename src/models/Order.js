@@ -48,6 +48,17 @@ const orderSchema = new mongoose.Schema(
     address: addressSchema,
     subtotal: Number,
     shipping: Number,
+    giftWrapFee: { type: Number, default: 0 },
+    // Gift options chosen at checkout.
+    gift: {
+      wrap: { type: Boolean, default: false },
+      note: String, // printed on a card in the box
+      hidePrices: { type: Boolean, default: false }, // no prices on the packing slip
+    },
+    // The date the customer needs it by (an occasion), if they gave one.
+    neededBy: Date,
+    // Set when this order pays for a custom quote.
+    quote: { type: mongoose.Schema.Types.ObjectId, ref: 'Quote' },
     total: { type: Number, required: true },
     payment: {
       method: { type: String, enum: ['upi', 'cod'], required: true },
@@ -81,6 +92,11 @@ export function toPublicOrder(doc) {
     address: o.address,
     payment: o.payment.method, // the frontend reads `order.payment` as a plain 'upi' | 'cod' string
     paymentStatus: o.paymentStatus || 'pending',
+    subtotal: o.subtotal,
+    shipping: o.shipping,
+    giftWrapFee: o.giftWrapFee || 0,
+    gift: o.gift?.wrap || o.gift?.note ? { wrap: Boolean(o.gift.wrap), note: o.gift.note || '', hidePrices: Boolean(o.gift.hidePrices) } : null,
+    neededBy: o.neededBy || null,
     total: o.total,
     status: o.status,
     trackingNumber: o.trackingNumber || null,

@@ -6,6 +6,9 @@ import { z } from 'zod'
 import Customer from '../models/Customer.js'
 import Order, { STATUSES, STATUS_FLOW, TRACKED_STATUSES } from '../models/Order.js'
 import CollectionModel, { toPublicCollection } from '../models/Collection.js'
+import Quote, { toPublicQuote, QUOTE_STATUSES } from '../models/Quote.js'
+import { enqueue } from '../jobs/queue.js'
+import { SHOP } from '../lib/settings.js'
 import Product, { toAdminProduct } from '../models/Product.js'
 import { authenticator } from 'otplib'
 import QRCode from 'qrcode'
@@ -211,6 +214,59 @@ function assertTransition(order, next) {
   const toIndex = STATUS_FLOW.indexOf(next)
   if (toIndex > fromIndex + 1) throw new HttpError(400, 'Move the order forward one step at a time.')
 }
+
+// --------------------------------------------------------------- quotes ---
+router.get(
+  '/quotes',
+  asyncHandler(async (req, res) => {
+    const status = String(req.query.status || '')
+    const filter = QUOTE_STATUSES.includes(status) ? { status } : {}
+    const quotes = await Quote.find(filter).populate('customer', 'email name').sort({ createdAt: -1 }).limit(300)
+    res.json({
+      quotes: quotes.map((q) => ({
+        ...toPublicQuote(q),
+        customer: q.customer ? { email: q.customer.email, name: q.customer.name || '' } : null,
+        price: q.price ?? null,
+        quotedAt: q.quotedAt || null,
+      })),
+    })
+  }),
+)
+
+const quoteActionSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('quote'),
+    price: z.number().int('Use whole rupees').min(1, 'Enter a price'),
+    adminNote: z.string().trim().max(1000).optional().default(''),
+    validDays: z.number().int().min(1).max(60).optional().default(SHOP.quoteValidDays),
+  }),
+  z.object({ action: z.literal('decline'), reason: z.string().trim().min(3, 'Say briefly why').max(500) }),
+])
+
+router.patch(
+  '/quotes/:id',
+  validateBody(quoteActionSchema),
+  asyncHandler(async (req, res) => {
+    const quote = await Quote.findById(req.params.id).catch(() => null)
+    if (!quote) throw new HttpError(404, 'Quote not found')
+    if (quote.status === 'paid') throw new HttpError(400, 'This quote is paid — change the order instead.')
+
+    if (req.body.action === 'quote') {
+      quote.status = 'quoted'
+      quote.price = req.body.price
+      quote.adminNote = req.body.adminNote
+      quote.quotedAt = new Date()
+      quote.validUntil = new Date(Date.now() + req.body.validDays * 86_400_000)
+      quote.declineReason = undefined
+    } else {
+      quote.status = 'declined'
+      quote.declineReason = req.body.reason
+    }
+    await quote.save()
+    await enqueue(req.body.action === 'quote' ? 'email.quoteReady' : 'email.quoteDeclined', { quoteId: quote._id.toString() })
+    res.json({ quote: toPublicQuote(quote) })
+  }),
+)
 
 // ---------------------------------------------------------- collections ---
 router.get(

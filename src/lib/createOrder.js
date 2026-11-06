@@ -66,43 +66,99 @@ export async function priceItems(items) {
   })
 }
 
-/** Prices a cart and creates the Order document. Shared by the plain COD/UPI
- *  checkout (routes/orders.js) and the Razorpay flow (routes/payments.js) so
- *  there is exactly one place that decides what something costs. */
 export const FREE_SHIPPING_FROM = SHOP.freeShippingFrom
 export const SHIPPING_FEE = SHOP.shippingFee
 export const COD_LIMIT = SHOP.codLimit
 
-export async function createOrderFromCart({ customer, items, address, payment }) {
-  const lines = await priceItems(items)
+/** Gift options chosen at checkout. */
+export const giftSchema = z
+  .object({
+    wrap: z.boolean().optional().default(false),
+    note: z.string().trim().max(SHOP.giftNoteMaxChars, `Keep the gift note under ${SHOP.giftNoteMaxChars} characters`).optional().default(''),
+    hidePrices: z.boolean().optional().default(false),
+  })
+  .optional()
+
+/** The earliest date (YYYY-MM-DD, India time) we can realistically deliver. */
+export function earliestDeliveryDate(from = new Date()) {
+  const d = new Date(from.getTime() + SHOP.leadTimeDays * 86_400_000)
+  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+}
+
+/** "Needed by" date — optional, but if given it must be one we can meet. */
+export const neededBySchema = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a valid date')
+  .refine((v) => v >= earliestDeliveryDate(), {
+    message: `That is too soon — candles take about ${SHOP.leadTimeDays} days to pour, cure and ship.`,
+  })
+  .optional()
+  .or(z.literal('').transform(() => undefined))
+
+function baseOrder({ customer, lines, address, payment, gift, neededBy, freeShipping = false }) {
   const subtotal = lines.reduce((sum, l) => sum + l.unitPrice * l.count, 0)
-  const shipping = subtotal >= FREE_SHIPPING_FROM ? 0 : SHIPPING_FEE
-  const total = subtotal + shipping
+  const shipping = freeShipping || subtotal >= FREE_SHIPPING_FROM ? 0 : SHIPPING_FEE
+  const giftWrapFee = gift?.wrap ? SHOP.giftWrapFee : 0
+  const total = subtotal + shipping + giftWrapFee
 
   if (payment === 'cod' && total > COD_LIMIT) {
-    throw new HttpError(400, 'Cash on delivery is not available above ₹2,000. Pay by UPI instead.')
+    throw new HttpError(400, `Cash on delivery is not available above ₹${COD_LIMIT.toLocaleString('en-IN')}. Pay by UPI instead.`)
   }
-
-  const orderNumber = await generateOrderNumber()
-  const expectedBy = new Date()
-  expectedBy.setDate(expectedBy.getDate() + SHOP.leadTimeDays)
 
   // A UPI order is only a real order once Razorpay confirms the money — until
   // then it waits outside the fulfilment flow (see STATUSES in models/Order.js).
   const status = payment === 'upi' ? 'awaiting_payment' : 'placed'
+  const expectedBy = new Date(Date.now() + SHOP.leadTimeDays * 86_400_000)
 
-  return Order.create({
-    orderNumber,
+  return {
     customer: customer._id,
     items: lines,
     address,
     subtotal,
     shipping,
+    giftWrapFee,
+    gift: gift ? { wrap: gift.wrap, note: gift.note || '', hidePrices: gift.hidePrices } : undefined,
+    neededBy: neededBy ? new Date(`${neededBy}T00:00:00+05:30`) : undefined,
     total,
     payment: { method: payment },
     paymentStatus: 'pending',
     status,
     statusHistory: [{ status, at: new Date(), by: customer.email }],
     expectedBy,
+  }
+}
+
+/** Prices a cart and creates the Order document. Shared by COD checkout
+ *  (routes/orders.js) and the Razorpay flow (routes/payments.js) so there is
+ *  exactly one place that decides what something costs. */
+export async function createOrderFromCart({ customer, items, address, payment, gift, neededBy }) {
+  const lines = await priceItems(items)
+  return Order.create({
+    orderNumber: await generateOrderNumber(),
+    ...baseOrder({ customer, lines, address, payment, gift, neededBy }),
+  })
+}
+
+/** Turns an accepted custom quote into an order (UPI only — custom work is
+ *  paid up front). The price is the one the admin set, read from the quote
+ *  document, never from the request. Delivery is included in a quote. */
+export async function createOrderFromQuote({ customer, quote, address, gift }) {
+  const line = {
+    key: `quote::${quote.number}`,
+    productId: quote.productId || `quote:${quote.number}`,
+    name: quote.productName ? `${quote.productName} (custom)` : 'Custom order',
+    image: quote.images?.[0]?.url || '',
+    tierId: 'quote',
+    tierLabel: `Quote ${quote.number}`,
+    unitPrice: quote.price,
+    count: 1,
+    note: quote.message || '',
+  }
+  const neededBy = quote.neededBy ? quote.neededBy.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) : undefined
+  return Order.create({
+    orderNumber: await generateOrderNumber(),
+    quote: quote._id,
+    ...baseOrder({ customer, lines: [line], address, payment: 'upi', gift, neededBy, freeShipping: true }),
   })
 }

@@ -118,6 +118,7 @@ function itemsTable(order) {
     .join('')
   return `<table role="presentation" width="100%" style="border-top:1px solid #E3DED5;border-bottom:1px solid #E3DED5;margin:16px 0;font-size:14px">${rows}
 <tr><td style="padding:6px 0;color:#8A8178">Delivery</td><td align="right">${order.shipping ? inr(order.shipping) : 'Free'}</td></tr>
+${order.giftWrapFee ? `<tr><td style="padding:6px 0;color:#8A8178">Gift wrap</td><td align="right">${inr(order.giftWrapFee)}</td></tr>` : ''}
 <tr><td style="padding:6px 0;font-weight:bold">Total</td><td align="right" style="font-weight:bold">${inr(order.total)}</td></tr></table>`
 }
 
@@ -163,6 +164,8 @@ export async function sendOrderConfirmationEmail(email, order) {
 ${itemsTable(order)}
 <p style="margin:0"><strong>Payment:</strong> ${esc(paid)}<br>
 <strong>Expected by:</strong> ${esc(longDate(order.expectedBy))} (hand-poured, so this is an estimate)<br>
+${order.neededBy ? `<strong>You need it by:</strong> ${esc(longDate(order.neededBy))} — noted<br>` : ''}
+${order.gift?.note ? `<strong>Gift note:</strong> “${esc(order.gift.note)}”<br>` : ''}
 <strong>Delivering to:</strong> ${esc(a.fullName)}, ${esc(a.line1)}${a.line2 ? `, ${esc(a.line2)}` : ''}, ${esc(a.city)} ${esc(a.pincode)}</p>`,
     ),
   })
@@ -185,5 +188,75 @@ export async function sendOrderStatusEmail(email, order) {
     subject: `Order ${order.orderNumber} — ${title.toLowerCase()}`,
     text: `${title}. ${body}${order.trackingNumber ? ` Tracking: ${order.courier} ${order.trackingNumber}` : ''}`,
     html: layout(title, `<p>Order <strong>${esc(order.orderNumber)}</strong>. ${esc(body)}</p>${tracking}`),
+  })
+}
+
+// ----------------------------------------------------------------- quotes ---
+
+const button = (href, label) =>
+  `<p style="margin:22px 0 6px"><a href="${esc(href)}" style="background:#C1441E;color:#FBFAF6;text-decoration:none;padding:12px 22px;border-radius:999px;display:inline-block;font-weight:600">${esc(label)}</a></p>`
+
+const quoteSummary = (q) =>
+  `<table role="presentation" width="100%" style="border-top:1px solid #E3DED5;border-bottom:1px solid #E3DED5;margin:16px 0;font-size:14px">
+${q.productName ? `<tr><td style="padding:5px 0;color:#8A8178">Starting from</td><td align="right">${esc(q.productName)}</td></tr>` : ''}
+${q.occasion ? `<tr><td style="padding:5px 0;color:#8A8178">Occasion</td><td align="right">${esc(q.occasion)}</td></tr>` : ''}
+${q.message ? `<tr><td style="padding:5px 0;color:#8A8178">Hidden message</td><td align="right">“${esc(q.message)}”</td></tr>` : ''}
+${q.neededBy ? `<tr><td style="padding:5px 0;color:#8A8178">Needed by</td><td align="right">${esc(longDate(q.neededBy))}</td></tr>` : ''}
+</table>`
+
+export async function sendQuoteReceivedEmail(email, quote) {
+  await sendEmail({
+    to: email,
+    subject: `We have your request ${quote.number}`,
+    text: `Thanks — we have your custom request ${quote.number}. We will reply with a price within a working day.`,
+    html: layout(
+      'We have your request',
+      `<p>Request <strong>${esc(quote.number)}</strong>. A person reads every one — expect a price within a working day.</p>${quoteSummary(quote)}`,
+    ),
+  })
+}
+
+export async function sendQuoteNotifyShopEmail(to, quote, customerEmail, adminUrl) {
+  await sendEmail({
+    to,
+    subject: `New quote request ${quote.number}${quote.productName ? ` — ${quote.productName}` : ''}`,
+    text: `${customerEmail} asked for: ${quote.details}`,
+    html: layout(
+      `New request ${quote.number}`,
+      `<p>From <strong>${esc(customerEmail)}</strong>${quote.budget ? ` · budget ${esc(quote.budget)}` : ''}.</p>
+${quoteSummary(quote)}<p style="white-space:pre-wrap">${esc(quote.details)}</p>
+${quote.images?.length ? `<p>${quote.images.length} reference photo(s) attached in the admin panel.</p>` : ''}
+${button(adminUrl, 'Open in admin')}`,
+    ),
+  })
+}
+
+export async function sendQuoteReadyEmail(email, quote, link) {
+  await sendEmail({
+    to: email,
+    subject: `Your quote ${quote.number}: ${inr(quote.price)}`,
+    text: `Your custom request ${quote.number} is priced at ${inr(quote.price)} (delivery included). Pay by ${longDate(quote.validUntil)}: ${link}`,
+    html: layout(
+      'Your quote is ready',
+      `<p style="font-size:26px;margin:4px 0 2px;font-weight:bold">${inr(quote.price)}</p>
+<p style="margin:0;color:#8A8178">Delivery included · valid until ${esc(longDate(quote.validUntil))}</p>
+${quote.adminNote ? `<p style="white-space:pre-wrap">${esc(quote.adminNote)}</p>` : ''}${quoteSummary(quote)}
+${button(link, 'Review and pay')}
+<p style="font-size:13px;color:#8A8178">Pouring starts once it is paid. Questions? Just reply to this email.</p>`,
+    ),
+  })
+}
+
+export async function sendQuoteDeclinedEmail(email, quote) {
+  await sendEmail({
+    to: email,
+    subject: `About your request ${quote.number}`,
+    text: `We cannot take on request ${quote.number}: ${quote.declineReason}`,
+    html: layout(
+      'We cannot make this one',
+      `<p>Thank you for request <strong>${esc(quote.number)}</strong>. Unfortunately we cannot take it on:</p>
+<p style="white-space:pre-wrap;border-left:3px solid #E3DED5;padding-left:12px">${esc(quote.declineReason)}</p>
+<p>If something close would work, reply to this email and we will suggest options.</p>`,
+    ),
   })
 }

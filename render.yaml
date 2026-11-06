@@ -53,5 +53,13 @@ services:
         value: aurie/products
       - key: GEMINI_API_KEY
         sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: STOREFRONT_URL
+        value: https://www.aurie.website
+      - key: ADMIN_URL
+        value: https://admin.aurie.website
+      - key: ADMIN_NOTIFY_EMAIL
+        sync: false
       - key: WHATSAPP
         sync: false

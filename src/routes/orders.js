@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import Order, { toPublicOrder } from '../models/Order.js'
-import { addressSchema, itemsSchema, createOrderFromCart } from '../lib/createOrder.js'
+import { addressSchema, itemsSchema, giftSchema, neededBySchema, createOrderFromCart } from '../lib/createOrder.js'
 import { sendConfirmationOnce } from '../lib/orderEvents.js'
 import { requireAuth } from '../middleware/requireAuth.js'
 import { validateBody } from '../middleware/validate.js'
@@ -27,6 +27,8 @@ const orderSchema = z.object({
   // Cash on delivery only. UPI must go through POST /payments/order so that
   // Razorpay — not the request body — is what says an order was paid for.
   payment: z.literal('cod', { errorMap: () => ({ message: 'Pay by UPI through the payment page instead.' }) }),
+  gift: giftSchema,
+  neededBy: neededBySchema,
   // `total` may be present in the body (the frontend sends it for its own display) — it is
   // intentionally absent from this schema so Zod strips it before it can influence pricing.
 })
@@ -35,8 +37,8 @@ router.post(
   '/',
   validateBody(orderSchema),
   asyncHandler(async (req, res) => {
-    const { items, address, payment } = req.body
-    const order = await createOrderFromCart({ customer: req.customer, items, address, payment })
+    const { items, address, payment, gift, neededBy } = req.body
+    const order = await createOrderFromCart({ customer: req.customer, items, address, payment, gift, neededBy })
     await sendConfirmationOnce(order._id) // queued — a mail outage never blocks the checkout
     res.status(201).json({ order: toPublicOrder(order) })
   }),

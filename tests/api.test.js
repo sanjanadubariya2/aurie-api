@@ -12,6 +12,10 @@ vi.mock('../src/services/mailer.js', () => ({
   sendPhoneOtpFallbackEmail: vi.fn(async () => {}),
   sendOrderConfirmationEmail: vi.fn(async () => {}),
   sendOrderStatusEmail: vi.fn(async () => {}),
+  sendQuoteReceivedEmail: vi.fn(async () => {}),
+  sendQuoteNotifyShopEmail: vi.fn(async () => {}),
+  sendQuoteReadyEmail: vi.fn(async () => {}),
+  sendQuoteDeclinedEmail: vi.fn(async () => {}),
 }))
 
 const mailer = await import('../src/services/mailer.js')

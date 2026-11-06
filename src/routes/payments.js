@@ -1,7 +1,8 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import Order, { toPublicOrder } from '../models/Order.js'
-import { addressSchema, itemsSchema, createOrderFromCart } from '../lib/createOrder.js'
+import { addressSchema, itemsSchema, giftSchema, neededBySchema, createOrderFromCart, createOrderFromQuote } from '../lib/createOrder.js'
+import Quote from '../models/Quote.js'
 import { createRazorpayOrder, verifyPaymentSignature } from '../services/razorpay.js'
 import { markOrderPaid } from '../lib/orderEvents.js'
 import { requireAuth } from '../middleware/requireAuth.js'
@@ -24,15 +25,15 @@ router.use(requireAuth)
 
 router.post(
   '/order',
-  validateBody(z.object({ items: itemsSchema, address: addressSchema })),
+  validateBody(z.object({ items: itemsSchema, address: addressSchema, gift: giftSchema, neededBy: neededBySchema })),
   asyncHandler(async (req, res) => {
-    const { items, address } = req.body
+    const { items, address, gift, neededBy } = req.body
 
     // Step 1+2: reprice from the database and create the Aurie order first.
     // Deliberately before calling Razorpay — if the process dies between the
     // two calls, we have a pending order to reconcile, not a payment with no
     // record of what it was for.
-    const order = await createOrderFromCart({ customer: req.customer, items, address, payment: 'upi' })
+    const order = await createOrderFromCart({ customer: req.customer, items, address, payment: 'upi', gift, neededBy })
 
     // Step 3: a Razorpay order for that exact, server-computed total.
     const { razorpayOrderId, amount, currency, keyId } = await createRazorpayOrder({
@@ -44,6 +45,35 @@ router.post(
     order.razorpayOrderId = razorpayOrderId
     await order.save()
 
+    res.status(201).json({ razorpayOrderId, amount, currency, keyId, orderId: order.orderNumber })
+  }),
+)
+
+/**
+ * Pays an accepted custom quote. Same Razorpay flow as a cart: the Aurie order
+ * is created first (awaiting_payment) at the price the admin quoted, then the
+ * Razorpay order for that exact amount. /verify and the webhook finish it.
+ */
+router.post(
+  '/quote/:id',
+  validateBody(z.object({ address: addressSchema, gift: giftSchema })),
+  asyncHandler(async (req, res) => {
+    const quote = await Quote.findOne({ _id: req.params.id, customer: req.customer._id }).catch(() => null)
+    if (!quote) throw new HttpError(404, 'Quote not found')
+    if (quote.status === 'paid') throw new HttpError(400, 'This quote is already paid.')
+    if (quote.status !== 'quoted' || !quote.price) throw new HttpError(400, 'This quote is not ready to pay yet.')
+    if (quote.validUntil && quote.validUntil < new Date()) {
+      throw new HttpError(400, 'This quote has expired. Message us and we will refresh it.')
+    }
+
+    const order = await createOrderFromQuote({ customer: req.customer, quote, address: req.body.address, gift: req.body.gift })
+    const { razorpayOrderId, amount, currency, keyId } = await createRazorpayOrder({
+      amountInRupees: order.total,
+      receipt: order.orderNumber,
+      aurieOrderId: order._id.toString(),
+    })
+    order.razorpayOrderId = razorpayOrderId
+    await order.save()
     res.status(201).json({ razorpayOrderId, amount, currency, keyId, orderId: order.orderNumber })
   }),
 )

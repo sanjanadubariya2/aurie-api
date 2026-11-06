@@ -2,7 +2,16 @@ import Order from '../models/Order.js'
 import { defineJob } from './queue.js'
 import { SHOP } from '../lib/settings.js'
 import { logger } from '../lib/logger.js'
-import { sendOrderConfirmationEmail, sendOrderStatusEmail } from '../services/mailer.js'
+import Quote from '../models/Quote.js'
+import { config } from '../config.js'
+import {
+  sendOrderConfirmationEmail,
+  sendOrderStatusEmail,
+  sendQuoteReceivedEmail,
+  sendQuoteNotifyShopEmail,
+  sendQuoteReadyEmail,
+  sendQuoteDeclinedEmail,
+} from '../services/mailer.js'
 import { fetchCapturedPayment } from '../services/razorpay.js'
 import { markOrderPaid } from '../lib/orderEvents.js'
 
@@ -24,6 +33,30 @@ export function registerJobs() {
     // status has its own job, and two emails out of order read as a glitch.
     if (!order?.customer?.email || order.status !== status) return
     await sendOrderStatusEmail(order.customer.email, order)
+  })
+
+  const loadQuote = (quoteId) => Quote.findById(quoteId).populate('customer', 'email')
+
+  defineJob('email.quoteReceived', async ({ quoteId }) => {
+    const quote = await loadQuote(quoteId)
+    if (!quote?.customer?.email) return
+    await sendQuoteReceivedEmail(quote.customer.email, quote)
+    if (config.notifyEmail) {
+      const adminUrl = `${config.adminUrl}/quotes?open=${quote._id}`
+      await sendQuoteNotifyShopEmail(config.notifyEmail, quote, quote.customer.email, adminUrl)
+    }
+  })
+
+  defineJob('email.quoteReady', async ({ quoteId }) => {
+    const quote = await loadQuote(quoteId)
+    if (!quote?.customer?.email || quote.status !== 'quoted') return
+    await sendQuoteReadyEmail(quote.customer.email, quote, `${config.storefrontUrl}/quotes/${quote._id}`)
+  })
+
+  defineJob('email.quoteDeclined', async ({ quoteId }) => {
+    const quote = await loadQuote(quoteId)
+    if (!quote?.customer?.email || quote.status !== 'declined') return
+    await sendQuoteDeclinedEmail(quote.customer.email, quote)
   })
 
   /**

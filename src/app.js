@@ -17,6 +17,8 @@ import catalogRouter from './routes/products.js'
 import ordersRouter from './routes/orders.js'
 import paymentsRouter from './routes/payments.js'
 import adminRouter from './routes/admin.js'
+import quotesRouter from './routes/quotes.js'
+import aiRouter from './routes/ai.js'
 
 /** Builds the Express app without connecting or listening — server.js does
  *  that, and the tests import this directly. */
@@ -77,6 +79,8 @@ export function createApp() {
   app.use('/api', catalogRouter)
   app.use('/api/orders', ordersRouter)
   app.use('/api/payments', paymentsRouter)
+  app.use('/api/quotes', quotesRouter)
+  app.use('/api/ai', aiRouter)
   app.use('/api/admin', adminRouter)
 
   app.use(notFoundHandler)
