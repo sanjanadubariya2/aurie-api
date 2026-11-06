@@ -37,7 +37,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const { items, address, payment } = req.body
     const order = await createOrderFromCart({ customer: req.customer, items, address, payment })
-    sendConfirmationOnce(order._id) // fire and forget — never blocks the checkout
+    await sendConfirmationOnce(order._id) // queued — a mail outage never blocks the checkout
     res.status(201).json({ order: toPublicOrder(order) })
   }),
 )

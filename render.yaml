@@ -1,0 +1,57 @@
+# Render Blueprint — New > Blueprint > pick this repo. Render reads the
+# commands and health check from here and asks for each secret marked
+# sync: false once. Point api.aurie.website at the service (Settings >
+# Custom Domains) so the session cookie is same-site with the storefront.
+services:
+  - type: web
+    name: aurie-api
+    runtime: node
+    plan: free # change to starter (~$7/mo) to stop the 15-minute spin-down
+    region: singapore # closest Render region to India
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20"
+      - key: CORS_ORIGIN
+        value: https://www.aurie.website,https://aurie.website,https://admin.aurie.website
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: EMAIL_PROVIDER
+        value: resend
+      - key: EMAIL_FROM
+        value: "Aurie <orders@aurie.website>"
+      - key: RESEND_API_KEY
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: CLOUDINARY_FOLDER
+        value: aurie/products
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: WHATSAPP
+        sync: false

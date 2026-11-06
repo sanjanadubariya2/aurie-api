@@ -24,6 +24,12 @@ const customerSchema = new mongoose.Schema(
     role: { type: String, enum: ['customer', 'admin'], default: 'customer' },
     passwordHash: String, // admins only — customers never get one
     addresses: [addressSchema],
+    // Bumped on "sign out everywhere" / password change — every token carrying
+    // an older value stops working at once, without a token blacklist.
+    tokenVersion: { type: Number, default: 0 },
+    // Admin two-factor (TOTP). The secret is AES-GCM encrypted at rest.
+    totpSecretEnc: String,
+    totpEnabled: { type: Boolean, default: false },
   },
   { timestamps: true },
 )

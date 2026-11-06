@@ -34,6 +34,10 @@ export function errorHandler(err, req, res, next) {
     return res.status(400).json({ message: err.message })
   }
 
-  console.error(err)
-  res.status(500).json({ message: config.isProd ? 'Something went wrong. Try again.' : err.message })
+  // pino-http attaches req.log with this request's id.
+  ;(req.log || console).error({ err }, 'unhandled error')
+  res.status(500).json({
+    message: config.isProd ? 'Something went wrong. Try again.' : err.message,
+    requestId: req.id,
+  })
 }

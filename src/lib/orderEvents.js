@@ -1,50 +1,52 @@
 import Order from '../models/Order.js'
-import { sendOrderConfirmationEmail } from '../services/mailer.js'
+import { enqueue } from '../jobs/queue.js'
+import { logger } from './logger.js'
 
 /**
- * Sends the "we have your order" email exactly once per order. The claim on
- * `confirmationSentAt` is atomic, so the Razorpay verify call and the webhook
- * racing each other can never both send it. Never throws — an email outage
- * must not fail a checkout that has already succeeded.
+ * Queues the "we have your order" email. The job retries with backoff if the
+ * mail provider is down, and the uniqueKey means a verify call and a webhook
+ * racing each other can never queue it twice. Never throws.
  */
 export async function sendConfirmationOnce(orderId) {
   try {
-    const order = await Order.findOneAndUpdate(
-      { _id: orderId, confirmationSentAt: { $exists: false } },
-      { $set: { confirmationSentAt: new Date() } },
-      { new: true },
-    ).populate('customer', 'email')
-    if (!order?.customer?.email) return
-    await sendOrderConfirmationEmail(order.customer.email, order)
+    await enqueue('email.orderConfirmation', { orderId: String(orderId) }, { uniqueKey: `confirm:${orderId}` })
   } catch (err) {
-    console.error(`Order confirmation email failed for ${orderId}:`, err.message)
+    logger.error({ orderId: String(orderId), err: err.message }, 'could not queue confirmation email')
+  }
+}
+
+/** Queues the status-change email the admin panel promises ("Save and notify customer"). */
+export async function notifyStatusChange(order) {
+  try {
+    await enqueue('email.orderStatus', { orderId: String(order._id), status: order.status })
+  } catch (err) {
+    logger.error({ order: order.orderNumber, err: err.message }, 'could not queue status email')
   }
 }
 
 /**
  * Marks a Razorpay order paid and moves it into the fulfilment flow. Used by
- * both POST /payments/verify and the webhook. The filter on paymentStatus makes
- * it idempotent: the second caller gets null back and does nothing.
+ * POST /payments/verify, the webhook and the reconcile job. Idempotent: the
+ * paymentStatus filter means a second caller changes nothing and gets null.
  */
 export async function markOrderPaid({ razorpayOrderId, razorpayPaymentId, customerId, by }) {
   const filter = { razorpayOrderId, paymentStatus: { $ne: 'paid' } }
   if (customerId) filter.customer = customerId
 
-  const update = {
-    $set: { paymentStatus: 'paid', razorpayPaymentId },
-  }
-  // Only promote an order that is still waiting on payment. One the admin has
-  // already cancelled stays cancelled (and needs a refund, flagged below).
   const order = await Order.findOne(filter)
   if (!order) return null
+
+  const update = { $set: { paymentStatus: 'paid', razorpayPaymentId } }
+  // Only promote an order still waiting on payment. One already cancelled stays
+  // cancelled — the money needs refunding, which is flagged loudly here.
   if (order.status === 'awaiting_payment') {
     update.$set.status = 'placed'
     update.$push = { statusHistory: { status: 'placed', at: new Date(), by } }
   } else if (order.status === 'cancelled') {
-    console.error(`Payment captured for cancelled order ${order.orderNumber} — refund it from the Razorpay dashboard.`)
+    logger.error({ order: order.orderNumber }, 'payment captured for a cancelled order — refund it in Razorpay')
   }
 
   const updated = await Order.findOneAndUpdate({ _id: order._id, paymentStatus: { $ne: 'paid' } }, update, { new: true })
-  if (updated && updated.status !== 'cancelled') sendConfirmationOnce(updated._id)
+  if (updated && updated.status !== 'cancelled') await sendConfirmationOnce(updated._id)
   return updated
 }

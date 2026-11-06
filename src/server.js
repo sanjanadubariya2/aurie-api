@@ -1,78 +1,44 @@
-import express from 'express'
-import mongoose from 'mongoose'
-import helmet from 'helmet'
-import cors from 'cors'
-import cookieParser from 'cookie-parser'
-import rateLimit from 'express-rate-limit'
 import { config, isRazorpayLive, isCloudinaryLive } from './config.js'
+import { createApp } from './app.js'
+import { connectDb, disconnectDb } from './db.js'
+import { logger } from './lib/logger.js'
 import { emailConfigured } from './services/mailer.js'
-import { connectDb } from './db.js'
-import { notFoundHandler, errorHandler } from './middleware/errorHandler.js'
-import webhookRouter from './routes/webhook.js'
-import authRouter from './routes/auth.js'
-import catalogRouter from './routes/products.js'
-import ordersRouter from './routes/orders.js'
-import paymentsRouter from './routes/payments.js'
-import adminRouter from './routes/admin.js'
-
-const app = express()
-
-// Railway (and most PaaS hosts) sit one reverse-proxy hop in front of this
-// app and set X-Forwarded-For to the real client IP. Trusting exactly that
-// one hop lets express-rate-limit key on the actual visitor instead of
-// Railway's proxy IP — without it, every visitor shares one rate-limit
-// bucket, so a few people hitting the OTP endpoint locks everyone out.
-app.set('trust proxy', 1)
-
-app.use(helmet())
-app.use(
-  cors({
-    origin: config.corsOrigins,
-    credentials: true,
-  }),
-)
-
-// Razorpay's webhook needs the raw request body to check its HMAC signature, so
-// it must be mounted before the app-wide express.json() consumes the stream.
-app.use('/api/payments/webhook', webhookRouter)
-
-app.use(express.json())
-app.use(cookieParser())
-
-// A generous ceiling on top of the tighter per-route limits (OTP, admin login).
-app.use('/api', rateLimit({ windowMs: 60_000, max: 120, standardHeaders: true, legacyHeaders: false }))
-
-// Reports the database too — a host's health check should fail (and restart
-// the app) when Mongo is unreachable, not keep routing traffic to it.
-app.get('/health', (req, res) => {
-  const db = mongoose.connection.readyState === 1
-  res.status(db ? 200 : 503).json({ ok: db, db })
-})
-
-app.use('/api/auth', authRouter)
-app.use('/api', catalogRouter) // GET /api/products, GET /api/collections
-app.use('/api/orders', ordersRouter)
-app.use('/api/payments', paymentsRouter)
-app.use('/api/admin', adminRouter)
-
-app.use(notFoundHandler)
-app.use(errorHandler)
+import { registerJobs } from './jobs/handlers.js'
+import { startWorker } from './jobs/queue.js'
 
 async function start() {
   await connectDb()
-  app.listen(config.port, () => {
-    console.log(`aurie-api listening on :${config.port}`)
-    console.log(
-      `  email: ${emailConfigured() ? config.email.provider + ' (with fallback if both set)' : 'console only'}` +
-        ` · razorpay: ${isRazorpayLive ? (config.razorpay.keyId.startsWith('rzp_live') ? 'LIVE keys' : 'test keys') : 'dev stub'}` +
-        ` · cloudinary: ${isCloudinaryLive ? 'on' : 'off'} · cors: ${config.corsOrigins.join(', ')}`,
+  registerJobs()
+  const stopWorker = startWorker({ recurring: [{ type: 'orders.reconcileUnpaid', everyMs: 60 * 60_000 }] })
+
+  const server = createApp().listen(config.port, () => {
+    logger.info(
+      {
+        port: config.port,
+        email: emailConfigured() ? `${config.email.provider} (+fallback)` : 'console only',
+        razorpay: isRazorpayLive ? (config.razorpay.keyId.startsWith('rzp_live') ? 'LIVE' : 'test') : 'dev stub',
+        cloudinary: isCloudinaryLive,
+        cors: config.corsOrigins,
+      },
+      'aurie-api listening',
     )
   })
+
+  // Render sends SIGTERM on every deploy — finish in-flight requests first.
+  const shutdown = (signal) => {
+    logger.info({ signal }, 'shutting down')
+    stopWorker()
+    server.close(async () => {
+      await disconnectDb().catch(() => {})
+      process.exit(0)
+    })
+    setTimeout(() => process.exit(1), 10_000).unref()
+  }
+  process.on('SIGTERM', shutdown)
+  process.on('SIGINT', shutdown)
 }
 
 start().catch((err) => {
-  console.error('Failed to start:', err)
+  logger.fatal({ err: err.message }, 'failed to start')
   process.exit(1)
 })
-
-export default app

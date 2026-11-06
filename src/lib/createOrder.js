@@ -3,6 +3,7 @@ import Product from '../models/Product.js'
 import Order from '../models/Order.js'
 import { generateOrderNumber } from './orderNumber.js'
 import { HttpError } from './HttpError.js'
+import { SHOP } from './settings.js'
 
 // Shared by routes/orders.js (COD + plain UPI) and routes/payments.js (the
 // Razorpay flow) so the two never drift on what a valid cart/address looks like.
@@ -28,7 +29,7 @@ export const itemsSchema = z
     z.object({
       productId: z.string().trim().min(1),
       tierId: z.string().trim().min(1),
-      count: z.number().int().min(1).max(20),
+      count: z.number().int().min(1).max(SHOP.maxPerLine),
       note: z.string().trim().max(200).optional().default(''),
     }),
   )
@@ -68,9 +69,9 @@ export async function priceItems(items) {
 /** Prices a cart and creates the Order document. Shared by the plain COD/UPI
  *  checkout (routes/orders.js) and the Razorpay flow (routes/payments.js) so
  *  there is exactly one place that decides what something costs. */
-export const FREE_SHIPPING_FROM = 999
-export const SHIPPING_FEE = 79
-export const COD_LIMIT = 2000
+export const FREE_SHIPPING_FROM = SHOP.freeShippingFrom
+export const SHIPPING_FEE = SHOP.shippingFee
+export const COD_LIMIT = SHOP.codLimit
 
 export async function createOrderFromCart({ customer, items, address, payment }) {
   const lines = await priceItems(items)
@@ -84,7 +85,7 @@ export async function createOrderFromCart({ customer, items, address, payment })
 
   const orderNumber = await generateOrderNumber()
   const expectedBy = new Date()
-  expectedBy.setDate(expectedBy.getDate() + 7) // 4 days to pour and cure, 3 to ship
+  expectedBy.setDate(expectedBy.getDate() + SHOP.leadTimeDays)
 
   // A UPI order is only a real order once Razorpay confirms the money — until
   // then it waits outside the fulfilment flow (see STATUSES in models/Order.js).

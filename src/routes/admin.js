@@ -7,11 +7,14 @@ import Customer from '../models/Customer.js'
 import Order, { STATUSES, STATUS_FLOW, TRACKED_STATUSES } from '../models/Order.js'
 import CollectionModel, { toPublicCollection } from '../models/Collection.js'
 import Product, { toAdminProduct } from '../models/Product.js'
-import { signToken } from '../services/token.js'
+import { authenticator } from 'otplib'
+import QRCode from 'qrcode'
+import { startSession, endSession } from '../lib/session.js'
+import { encrypt, decrypt } from '../lib/crypto.js'
 import { uploadImage, destroyImage } from '../services/cloudinary.js'
-import { sendOrderStatusEmail } from '../services/mailer.js'
+import { notifyStatusChange } from '../lib/orderEvents.js'
 import { publicCustomer } from '../lib/serialize.js'
-import { requireAuth } from '../middleware/requireAuth.js'
+import { requireAdminSession } from '../middleware/requireAuth.js'
 import { requireAdmin } from '../middleware/requireAdmin.js'
 import { validateBody } from '../middleware/validate.js'
 import { asyncHandler } from '../middleware/errorHandler.js'
@@ -36,26 +39,94 @@ const loginLimiter = rateLimit({ windowMs: 15 * 60_000, max: 10, standardHeaders
 router.post(
   '/login',
   loginLimiter,
-  validateBody(z.object({ email: z.string().trim().toLowerCase().email(), password: z.string().min(1) })),
+  validateBody(
+    z.object({
+      email: z.string().trim().toLowerCase().email(),
+      password: z.string().min(1),
+      code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code from your authenticator app').optional(),
+    }),
+  ),
   asyncHandler(async (req, res) => {
-    const { email, password } = req.body
+    const { email, password, code } = req.body
     const admin = await Customer.findOne({ email, role: 'admin' })
     const ok = admin?.passwordHash && (await bcrypt.compare(password, admin.passwordHash))
     // One message for both failures — do not reveal which admin emails exist
     if (!ok) return res.status(401).json({ message: 'That email and password do not match.' })
 
-    res.json({ token: signToken(admin), admin: publicCustomer(admin) })
+    if (admin.totpEnabled) {
+      // Password was right — ask for the second factor without issuing anything yet.
+      if (!code) return res.status(401).json({ message: 'Enter the code from your authenticator app.', needsTotp: true })
+      if (!authenticator.verify({ token: code, secret: decrypt(admin.totpSecretEnc) })) {
+        return res.status(401).json({ message: 'That authenticator code is not right. Try the current one.', needsTotp: true })
+      }
+    }
+
+    const token = startSession(res, admin, 'admin')
+    res.json({ token, admin: publicCustomer(admin) })
   }),
 )
 
+router.post('/logout', (req, res) => {
+  endSession(res, 'admin')
+  res.json({ ok: true })
+})
+
 // Everything below here requires a signed-in admin.
-router.use(requireAuth, requireAdmin)
+router.use(requireAdminSession, requireAdmin)
 
 // Lets the admin app confirm a stored token is still good on page load —
 // without this, refreshing any page silently signs the admin back out.
 router.get('/me', (req, res) => {
-  res.json({ admin: publicCustomer(req.customer) })
+  res.json({ admin: { ...publicCustomer(req.customer), totpEnabled: Boolean(req.customer.totpEnabled) } })
 })
+
+// ---------------------------------------------------------- two-factor ---
+// Setup is two steps so a half-finished setup can never lock the admin out:
+// /2fa/setup stores a pending secret, /2fa/enable turns it on only after the
+// admin proves their authenticator app produces matching codes.
+router.post(
+  '/2fa/setup',
+  asyncHandler(async (req, res) => {
+    if (req.customer.totpEnabled) throw new HttpError(400, 'Two-factor is already on. Turn it off first to re-pair.')
+    const secret = authenticator.generateSecret()
+    req.customer.totpSecretEnc = encrypt(secret)
+    await req.customer.save()
+    const otpauthUrl = authenticator.keyuri(req.customer.email, 'Aurie Admin', secret)
+    res.json({ otpauthUrl, secret, qr: await QRCode.toDataURL(otpauthUrl, { margin: 1, width: 220 }) })
+  }),
+)
+
+const totpCode = z.object({ code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code') })
+
+router.post(
+  '/2fa/enable',
+  validateBody(totpCode),
+  asyncHandler(async (req, res) => {
+    if (!req.customer.totpSecretEnc) throw new HttpError(400, 'Start the setup first.')
+    if (!authenticator.verify({ token: req.body.code, secret: decrypt(req.customer.totpSecretEnc) })) {
+      throw new HttpError(400, 'That code did not match. Check your phone clock is set automatically.')
+    }
+    req.customer.totpEnabled = true
+    req.customer.tokenVersion = (req.customer.tokenVersion || 0) + 1 // sign out other sessions
+    await req.customer.save()
+    startSession(res, req.customer, 'admin') // keep this one
+    res.json({ totpEnabled: true })
+  }),
+)
+
+router.post(
+  '/2fa/disable',
+  validateBody(totpCode.extend({ password: z.string().min(1) })),
+  asyncHandler(async (req, res) => {
+    const passwordOk = await bcrypt.compare(req.body.password, req.customer.passwordHash || '')
+    const codeOk = req.customer.totpEnabled && authenticator.verify({ token: req.body.code, secret: decrypt(req.customer.totpSecretEnc) })
+    if (!passwordOk || !codeOk) throw new HttpError(400, 'Password or code is not right.')
+    req.customer.totpEnabled = false
+    req.customer.totpSecretEnc = undefined
+    await req.customer.save()
+    res.json({ totpEnabled: false })
+  }),
+)
 
 // --------------------------------------------------------------- orders ---
 router.get(
@@ -117,9 +188,7 @@ router.patch(
     await order.save()
 
     // Fire and forget — a failed email must not fail the status update.
-    if (statusChanged && order.customer?.email) {
-      sendOrderStatusEmail(order.customer.email, order).catch((err) => console.error('Status email failed:', err.message))
-    }
+    if (statusChanged) await notifyStatusChange(order)
 
     res.json({ order })
   }),

@@ -14,8 +14,8 @@ if (dns.getServers().every((s) => s === '127.0.0.1' || s === '::1')) {
 }
 
 export async function connectDb() {
-  await mongoose.connect(config.mongodbUri)
-  console.log('db connected')
+  await mongoose.connect(config.mongodbUri, { serverSelectionTimeoutMS: 15_000 })
+  if (config.nodeEnv !== 'test') console.log('db connected')
 }
 
 export async function disconnectDb() {

@@ -60,3 +60,12 @@ export function verifyWebhookSignature(rawBody, signature) {
   const expected = crypto.createHmac('sha256', config.razorpay.webhookSecret).update(rawBody).digest('hex')
   return safeEqualHex(expected, signature)
 }
+
+/** The payments Razorpay holds for one of its orders — used to reconcile an
+ *  order our side still thinks is unpaid (webhook missed, tab closed). */
+export async function fetchCapturedPayment(razorpayOrderId) {
+  if (!isRazorpayLive || !razorpayOrderId || razorpayOrderId.startsWith('order_dev_')) return null
+  const razorpay = await getClient()
+  const { items = [] } = await razorpay.orders.fetchPayments(razorpayOrderId)
+  return items.find((p) => p.status === 'captured') || null
+}

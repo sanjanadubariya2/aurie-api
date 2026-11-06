@@ -5,7 +5,7 @@ import Customer from '../models/Customer.js'
 import { issueOtp, verifyOtp } from '../services/otp.js'
 import { sendOtpEmail, sendPhoneOtpFallbackEmail } from '../services/mailer.js'
 import { sendOtpSms } from '../services/sms.js'
-import { signToken } from '../services/token.js'
+import { startSession, endSession } from '../lib/session.js'
 import { isSmsLive, isWhatsAppOtpLive } from '../config.js'
 import { publicCustomer } from '../lib/serialize.js'
 import { requireAuth } from '../middleware/requireAuth.js'
@@ -76,7 +76,8 @@ router.post(
       { upsert: true, new: true },
     )
 
-    res.json({ token: signToken(customer), customer: publicCustomer(customer) })
+    const token = startSession(res, customer, 'customer')
+    res.json({ token, customer: publicCustomer(customer) })
   }),
 )
 
@@ -126,5 +127,23 @@ router.post(
 router.get('/me', requireAuth, (req, res) => {
   res.json({ customer: publicCustomer(req.customer) })
 })
+
+/** Ends this browser's session. Always succeeds, signed in or not. */
+router.post('/logout', (req, res) => {
+  endSession(res, 'customer')
+  res.json({ ok: true })
+})
+
+/** Signs out every device: bumps tokenVersion so all issued tokens die. */
+router.post(
+  '/logout-all',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    req.customer.tokenVersion = (req.customer.tokenVersion || 0) + 1
+    await req.customer.save()
+    endSession(res, 'customer')
+    res.json({ ok: true })
+  }),
+)
 
 export default router
