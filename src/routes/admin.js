@@ -21,6 +21,7 @@ import { asyncHandler } from '../middleware/errorHandler.js'
 import { HttpError } from '../lib/HttpError.js'
 
 const router = Router()
+const adminProfile = (a) => ({ ...publicCustomer(a), totpEnabled: Boolean(a.totpEnabled) })
 const imageUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
@@ -62,7 +63,7 @@ router.post(
     }
 
     const token = startSession(res, admin, 'admin')
-    res.json({ token, admin: publicCustomer(admin) })
+    res.json({ token, admin: adminProfile(admin) })
   }),
 )
 
@@ -77,7 +78,7 @@ router.use(requireAdminSession, requireAdmin)
 // Lets the admin app confirm a stored token is still good on page load —
 // without this, refreshing any page silently signs the admin back out.
 router.get('/me', (req, res) => {
-  res.json({ admin: { ...publicCustomer(req.customer), totpEnabled: Boolean(req.customer.totpEnabled) } })
+  res.json({ admin: adminProfile(req.customer) })
 })
 
 // ---------------------------------------------------------- two-factor ---
