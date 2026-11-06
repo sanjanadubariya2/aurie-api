@@ -21,6 +21,7 @@ import { requireAdminSession } from '../middleware/requireAuth.js'
 import { requireAdmin, requireOwner } from '../middleware/requireAdmin.js'
 import { auditReq } from '../lib/audit.js'
 import opsRouter from './adminOps.js'
+import growthRouter from './adminGrowth.js'
 import { validateBody } from '../middleware/validate.js'
 import { asyncHandler } from '../middleware/errorHandler.js'
 import { HttpError } from '../lib/HttpError.js'
@@ -83,6 +84,7 @@ router.use(requireAdminSession, requireAdmin)
 // Prices and the catalogue are the owner's call; staff can look but not change.
 router.use('/products', (req, res, next) => (req.method === 'GET' ? next() : requireOwner(req, res, next)))
 router.use(opsRouter)
+router.use(growthRouter)
 
 // Lets the admin app confirm a stored token is still good on page load —
 // without this, refreshing any page silently signs the admin back out.

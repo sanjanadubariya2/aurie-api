@@ -49,6 +49,9 @@ const orderSchema = new mongoose.Schema(
     subtotal: Number,
     shipping: Number,
     giftWrapFee: { type: Number, default: 0 },
+    couponCode: String,
+    discount: { type: Number, default: 0 },
+    couponCounted: { type: Boolean, default: false }, // usage counted once the sale is real
     // Gift options chosen at checkout.
     gift: {
       wrap: { type: Boolean, default: false },
@@ -117,6 +120,8 @@ export function toPublicOrder(doc) {
     subtotal: o.subtotal,
     shipping: o.shipping,
     giftWrapFee: o.giftWrapFee || 0,
+    discount: o.discount || 0,
+    couponCode: o.couponCode || null,
     gift: o.gift?.wrap || o.gift?.note ? { wrap: Boolean(o.gift.wrap), note: o.gift.note || '', hidePrices: Boolean(o.gift.hidePrices) } : null,
     neededBy: o.neededBy || null,
     total: o.total,

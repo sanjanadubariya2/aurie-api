@@ -1,7 +1,8 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import Order, { toPublicOrder } from '../models/Order.js'
-import { addressSchema, itemsSchema, giftSchema, neededBySchema, createOrderFromCart } from '../lib/createOrder.js'
+import { addressSchema, itemsSchema, giftSchema, neededBySchema, couponCodeSchema, createOrderFromCart } from '../lib/createOrder.js'
+import { countCouponUse } from '../lib/coupons.js'
 import { sendConfirmationOnce, notifyStatusChange } from '../lib/orderEvents.js'
 import { assignInvoiceNumber } from '../lib/invoice.js'
 import { refundOrder } from '../lib/refunds.js'
@@ -33,6 +34,7 @@ const orderSchema = z.object({
   payment: z.literal('cod', { errorMap: () => ({ message: 'Pay by UPI through the payment page instead.' }) }),
   gift: giftSchema,
   neededBy: neededBySchema,
+  couponCode: couponCodeSchema,
   // `total` may be present in the body (the frontend sends it for its own display) — it is
   // intentionally absent from this schema so Zod strips it before it can influence pricing.
 })
@@ -41,8 +43,9 @@ router.post(
   '/',
   validateBody(orderSchema),
   asyncHandler(async (req, res) => {
-    const { items, address, payment, gift, neededBy } = req.body
-    const order = await createOrderFromCart({ customer: req.customer, items, address, payment, gift, neededBy })
+    const { items, address, payment, gift, neededBy, couponCode } = req.body
+    const order = await createOrderFromCart({ customer: req.customer, items, address, payment, gift, neededBy, couponCode })
+    await countCouponUse(order._id)
     const invoiceNumber = await assignInvoiceNumber(order._id) // COD is a sale the moment it is placed
     await sendConfirmationOnce(order._id) // queued — a mail outage never blocks the checkout
     res.status(201).json({ order: toPublicOrder({ ...order.toObject(), invoiceNumber }) })

@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import Order, { toPublicOrder } from '../models/Order.js'
-import { addressSchema, itemsSchema, giftSchema, neededBySchema, createOrderFromCart, createOrderFromQuote } from '../lib/createOrder.js'
+import { addressSchema, itemsSchema, giftSchema, neededBySchema, couponCodeSchema, createOrderFromCart, createOrderFromQuote } from '../lib/createOrder.js'
 import Quote from '../models/Quote.js'
 import { createRazorpayOrder, verifyPaymentSignature } from '../services/razorpay.js'
 import { markOrderPaid } from '../lib/orderEvents.js'
@@ -25,15 +25,15 @@ router.use(requireAuth)
 
 router.post(
   '/order',
-  validateBody(z.object({ items: itemsSchema, address: addressSchema, gift: giftSchema, neededBy: neededBySchema })),
+  validateBody(z.object({ items: itemsSchema, address: addressSchema, gift: giftSchema, neededBy: neededBySchema, couponCode: couponCodeSchema })),
   asyncHandler(async (req, res) => {
-    const { items, address, gift, neededBy } = req.body
+    const { items, address, gift, neededBy, couponCode } = req.body
 
     // Step 1+2: reprice from the database and create the Aurie order first.
     // Deliberately before calling Razorpay — if the process dies between the
     // two calls, we have a pending order to reconcile, not a payment with no
     // record of what it was for.
-    const order = await createOrderFromCart({ customer: req.customer, items, address, payment: 'upi', gift, neededBy })
+    const order = await createOrderFromCart({ customer: req.customer, items, address, payment: 'upi', gift, neededBy, couponCode })
 
     // Step 3: a Razorpay order for that exact, server-computed total.
     const { razorpayOrderId, amount, currency, keyId } = await createRazorpayOrder({

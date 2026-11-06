@@ -1,6 +1,9 @@
 import { Router } from 'express'
 import rateLimit from 'express-rate-limit'
 import { z } from 'zod'
+import multer from 'multer'
+import Product from '../models/Product.js'
+import { HttpError } from '../lib/HttpError.js'
 import { generateJson } from '../services/ai.js'
 import { SHOP } from '../lib/settings.js'
 import { validateBody } from '../middleware/validate.js'
@@ -50,6 +53,107 @@ router.post(
       .filter((s) => s.length > 0 && [...s].length <= max)
       .slice(0, 5)
     res.json({ suggestions, maxChars: max })
+  }),
+)
+
+// --------------------------------------------------------- gift finder ---
+/** A compact catalogue the model can choose from — never invent a product. */
+async function catalogueForAi() {
+  const products = await Product.find({ active: true }).limit(200)
+  return products.map((p) => {
+    const prices = (p.tiers || []).map((t) => t.price)
+    return {
+      id: p.slug,
+      name: p.name,
+      collection: p.collection_,
+      price: p.quote ? 'custom quote' : prices.length ? `₹${Math.min(...prices)}${prices.length > 1 ? `–${Math.max(...prices)}` : ''}` : '',
+      scent: p.scent || '',
+      about: (p.blurb || '').slice(0, 140),
+    }
+  })
+}
+
+const picksSchema = {
+  type: 'OBJECT',
+  properties: {
+    intro: { type: 'STRING' },
+    picks: {
+      type: 'ARRAY',
+      items: { type: 'OBJECT', properties: { id: { type: 'STRING' }, reason: { type: 'STRING' } }, required: ['id', 'reason'] },
+    },
+  },
+  required: ['picks'],
+}
+
+/** Keeps only real, active products, at most four, each with a short reason. */
+function cleanPicks(out, catalogue) {
+  const ids = new Set(catalogue.map((p) => p.id))
+  const seen = new Set()
+  return (out.picks || [])
+    .filter((p) => ids.has(p.id) && !seen.has(p.id) && seen.add(p.id))
+    .slice(0, 4)
+    .map((p) => ({ id: p.id, reason: String(p.reason || '').slice(0, 200) }))
+}
+
+const SHOP_VOICE =
+  'You are the gift adviser for Aurie, a small Mumbai studio that hand-pours sculptural candles to order (about 7 days). ' +
+  'Warm, brief, practical. Only recommend products from the catalogue JSON you are given, by their exact id. ' +
+  'Respect the budget. Prefer "custom quote" products when the request needs a message, a name or a hamper.'
+
+router.post(
+  '/gift-finder',
+  validateBody(z.object({ query: z.string().trim().min(3, 'Tell us a little about the gift').max(400) })),
+  asyncHandler(async (req, res) => {
+    const catalogue = await catalogueForAi()
+    const out = await generateJson({
+      system: `${SHOP_VOICE} Return JSON: {"intro": one sentence, "picks": [up to 4 {"id", "reason" (max 20 words, why it suits this person)}]}.`,
+      prompt: `Catalogue: ${JSON.stringify(catalogue)}\n\nCustomer: ${req.body.query}`,
+      schema: picksSchema,
+      temperature: 0.6,
+    })
+    res.json({ intro: String(out.intro || '').slice(0, 240), picks: cleanPicks(out, catalogue) })
+  }),
+)
+
+// ------------------------------------------------------ photo matching ---
+const photoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) =>
+    /^image\/(jpeg|png|webp)$/.test(file.mimetype) ? cb(null, true) : cb(new HttpError(400, 'Use a JPG, PNG or WebP photo.')),
+})
+
+/**
+ * "Send us a reference": the customer uploads a photo (a cake, a flower, a
+ * Pinterest pin). The model describes it, picks the closest catalogue pieces,
+ * and drafts a brief the customer can send as a custom request.
+ */
+router.post(
+  '/match-photo',
+  photoUpload.single('photo'),
+  asyncHandler(async (req, res) => {
+    if (!req.file) throw new HttpError(400, 'Attach a photo.')
+    const catalogue = await catalogueForAi()
+    const out = await generateJson({
+      system:
+        `${SHOP_VOICE} You are shown a customer's reference photo. ` +
+        'Return JSON: {"description": what you see in one sentence, "picks": up to 3 {"id", "reason"} closest catalogue items, ' +
+        '"brief": a 2–3 sentence request the customer could send to have a candle made like this (shape, colours, size, finish)}. ' +
+        'If the photo is not something that could inspire a candle, say so in description and return no picks.',
+      prompt: `Catalogue: ${JSON.stringify(catalogue)}`,
+      images: [{ mimeType: req.file.mimetype, data: req.file.buffer.toString('base64') }],
+      schema: {
+        type: 'OBJECT',
+        properties: { description: { type: 'STRING' }, brief: { type: 'STRING' }, picks: picksSchema.properties.picks },
+        required: ['description', 'picks'],
+      },
+      temperature: 0.4,
+    })
+    res.json({
+      description: String(out.description || '').slice(0, 300),
+      brief: String(out.brief || '').slice(0, 600),
+      picks: cleanPicks(out, catalogue).slice(0, 3),
+    })
   }),
 )
 

@@ -4,6 +4,7 @@ import Order from '../models/Order.js'
 import { generateOrderNumber } from './orderNumber.js'
 import { HttpError } from './HttpError.js'
 import { SHOP } from './settings.js'
+import { evaluateCoupon } from './coupons.js'
 
 // Shared by routes/orders.js (COD + plain UPI) and routes/payments.js (the
 // Razorpay flow) so the two never drift on what a valid cart/address looks like.
@@ -96,11 +97,21 @@ export const neededBySchema = z
   .optional()
   .or(z.literal('').transform(() => undefined))
 
-function baseOrder({ customer, lines, address, payment, gift, neededBy, freeShipping = false }) {
+export const couponCodeSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .max(30)
+  .optional()
+  .or(z.literal('').transform(() => undefined))
+
+function baseOrder({ customer, lines, address, payment, gift, neededBy, freeShipping = false, discount = 0, couponCode }) {
   const subtotal = lines.reduce((sum, l) => sum + l.unitPrice * l.count, 0)
+  // Free delivery is judged on the pre-discount subtotal: a code never costs
+  // the customer their free shipping.
   const shipping = freeShipping || subtotal >= FREE_SHIPPING_FROM ? 0 : SHIPPING_FEE
   const giftWrapFee = gift?.wrap ? SHOP.giftWrapFee : 0
-  const total = subtotal + shipping + giftWrapFee
+  const total = subtotal - discount + shipping + giftWrapFee
 
   if (payment === 'cod' && total > COD_LIMIT) {
     throw new HttpError(400, `Cash on delivery is not available above ₹${COD_LIMIT.toLocaleString('en-IN')}. Pay by UPI instead.`)
@@ -118,6 +129,7 @@ function baseOrder({ customer, lines, address, payment, gift, neededBy, freeShip
     subtotal,
     shipping,
     giftWrapFee,
+    ...(couponCode ? { couponCode, discount } : {}),
     gift: gift ? { wrap: gift.wrap, note: gift.note || '', hidePrices: gift.hidePrices } : undefined,
     neededBy: neededBy ? new Date(`${neededBy}T00:00:00+05:30`) : undefined,
     total,
@@ -132,11 +144,12 @@ function baseOrder({ customer, lines, address, payment, gift, neededBy, freeShip
 /** Prices a cart and creates the Order document. Shared by COD checkout
  *  (routes/orders.js) and the Razorpay flow (routes/payments.js) so there is
  *  exactly one place that decides what something costs. */
-export async function createOrderFromCart({ customer, items, address, payment, gift, neededBy }) {
+export async function createOrderFromCart({ customer, items, address, payment, gift, neededBy, couponCode }) {
   const lines = await priceItems(items)
+  const applied = couponCode ? await evaluateCoupon({ code: couponCode, customer, lines }) : null
   return Order.create({
     orderNumber: await generateOrderNumber(),
-    ...baseOrder({ customer, lines, address, payment, gift, neededBy }),
+    ...baseOrder({ customer, lines, address, payment, gift, neededBy, discount: applied?.discount || 0, couponCode: applied?.coupon.code }),
   })
 }
 

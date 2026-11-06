@@ -3,6 +3,7 @@ import Product, { toPublicProduct } from '../models/Product.js'
 import CollectionModel, { toPublicCollection } from '../models/Collection.js'
 import { deliveryUrl } from '../services/cloudinary.js'
 import { asyncHandler } from '../middleware/errorHandler.js'
+import Review, { toPublicReview } from '../models/Review.js'
 
 /**
  * Backend contract
@@ -33,6 +34,18 @@ router.get(
   asyncHandler(async (req, res) => {
     const collections = await CollectionModel.find().sort({ order: 1 })
     res.json({ collections: collections.map(toPublicCollection) })
+  }),
+)
+
+/** Approved reviews for one product, newest first, with a rating summary. */
+router.get(
+  '/products/:slug/reviews',
+  asyncHandler(async (req, res) => {
+    const reviews = await Review.find({ product: req.params.slug, status: 'approved' }).sort({ createdAt: -1 }).limit(50)
+    const count = reviews.length
+    const average = count ? Math.round((reviews.reduce((s, r) => s + r.rating, 0) / count) * 10) / 10 : 0
+    res.set('Cache-Control', 'public, max-age=300')
+    res.json({ reviews: reviews.map(toPublicReview), summary: { average, count } })
   }),
 )
 

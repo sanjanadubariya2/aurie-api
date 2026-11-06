@@ -260,3 +260,38 @@ export async function sendQuoteDeclinedEmail(email, quote) {
     ),
   })
 }
+
+// ---------------------------------------------------------------- growth ---
+
+export async function sendReviewRequestEmail(email, order, link) {
+  const first = (order.address?.fullName || '').split(' ')[0]
+  await sendEmail({
+    to: email,
+    subject: `How is the ${order.items[0]?.name || 'candle'}?`,
+    text: `${first ? `Hi ${first}, ` : ''}your Aurie order ${order.orderNumber} arrived a few days ago. A short review (and a photo of it lit, if you have one) helps a small studio more than you would think: ${link}`,
+    html: layout(
+      first ? `Hi ${first} — how did it burn?` : 'How did it burn?',
+      `<p>Your order <strong>${esc(order.orderNumber)}</strong> arrived a few days ago. A two-line review — and a photo of it lit, if you have one — helps a small studio more than you would think.</p>
+${button(link, 'Write a review')}
+<p style="font-size:12px;color:#8A8178">Do not want these? Reply "stop" and we will not ask again.</p>`,
+    ),
+  })
+}
+
+export async function sendAbandonedCartEmail(email, lines, link) {
+  const rows = lines
+    .map((l) => `<tr><td style="padding:5px 0">${esc(l.name)} <span style="color:#8A8178">· ${esc(l.tierLabel)} × ${l.count}</span></td><td align="right">${inr(l.unitPrice * l.count)}</td></tr>`)
+    .join('')
+  await sendEmail({
+    to: email,
+    subject: 'Your candles are still waiting',
+    text: `You left ${lines.length} item(s) in your Aurie cart. They are poured to order, so nothing is reserved yet — finish here: ${link}`,
+    html: layout(
+      'Still thinking about these?',
+      `<p>You left these in your cart. Everything is poured after you order, so nothing is held — but the cart is saved for you.</p>
+<table role="presentation" width="100%" style="border-top:1px solid #E3DED5;border-bottom:1px solid #E3DED5;margin:14px 0;font-size:14px">${rows}</table>
+${button(link, 'Finish my order')}
+<p style="font-size:12px;color:#8A8178">You will only get this once per cart.</p>`,
+    ),
+  })
+}

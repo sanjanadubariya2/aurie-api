@@ -17,6 +17,8 @@ vi.mock('../src/services/mailer.js', () => {
     sendQuoteNotifyShopEmail: fn(),
     sendQuoteReadyEmail: fn(),
     sendQuoteDeclinedEmail: fn(),
+    sendReviewRequestEmail: fn(),
+    sendAbandonedCartEmail: fn(),
   }
 })
 

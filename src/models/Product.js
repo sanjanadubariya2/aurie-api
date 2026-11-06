@@ -24,6 +24,8 @@ const productSchema = new mongoose.Schema(
     quote: { type: Boolean, default: false }, // priced after a chat, not sold with tiers
     active: { type: Boolean, default: true },
     tiers: [tierSchema],
+    // Kept in step with approved reviews (lib/reviews.js), so listings never aggregate.
+    rating: { average: { type: Number, default: 0 }, count: { type: Number, default: 0 } },
   },
   { timestamps: true },
 )
@@ -43,6 +45,7 @@ export function toPublicProduct(doc) {
   if (p.badge) out.badge = p.badge
   if (p.quote) out.quote = true
   if (p.tiers?.length) out.tiers = p.tiers.map((t) => ({ id: t.id, label: t.label, qty: t.qty, price: t.price }))
+  if (p.rating?.count) out.rating = { average: p.rating.average, count: p.rating.count }
   return out
 }
 

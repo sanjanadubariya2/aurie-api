@@ -1,6 +1,7 @@
 import Order from '../models/Order.js'
 import Quote from '../models/Quote.js'
 import { assignInvoiceNumber } from './invoice.js'
+import { countCouponUse } from './coupons.js'
 import { enqueue } from '../jobs/queue.js'
 import { logger } from './logger.js'
 
@@ -21,6 +22,9 @@ export async function sendConfirmationOnce(orderId) {
 export async function notifyStatusChange(order) {
   try {
     await enqueue('email.orderStatus', { orderId: String(order._id), status: order.status })
+    if (order.status === 'delivered') {
+      await enqueue('email.reviewRequest', { orderId: String(order._id) }, { delayMs: 3 * 86_400_000, uniqueKey: `review:${order._id}` })
+    }
   } catch (err) {
     logger.error({ order: order.orderNumber, err: err.message }, 'could not queue status email')
   }
@@ -49,7 +53,10 @@ export async function markOrderPaid({ razorpayOrderId, razorpayPaymentId, custom
   }
 
   const updated = await Order.findOneAndUpdate({ _id: order._id, paymentStatus: { $ne: 'paid' } }, update, { new: true })
-  if (updated && updated.status !== 'cancelled') await assignInvoiceNumber(updated._id)
+  if (updated && updated.status !== 'cancelled') {
+    await assignInvoiceNumber(updated._id)
+    await countCouponUse(updated._id)
+  }
   if (updated?.quote) {
     // The custom quote this order paid for is now settled.
     await Quote.updateOne({ _id: updated.quote }, { $set: { status: 'paid', order: updated._id } })

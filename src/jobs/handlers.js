@@ -11,7 +11,12 @@ import {
   sendQuoteNotifyShopEmail,
   sendQuoteReadyEmail,
   sendQuoteDeclinedEmail,
+  sendReviewRequestEmail,
+  sendAbandonedCartEmail,
 } from '../services/mailer.js'
+import Customer from '../models/Customer.js'
+import Review from '../models/Review.js'
+import { priceItems } from '../lib/createOrder.js'
 import { fetchCapturedPayment } from '../services/razorpay.js'
 import { markOrderPaid } from '../lib/orderEvents.js'
 
@@ -57,6 +62,30 @@ export function registerJobs() {
     const quote = await loadQuote(quoteId)
     if (!quote?.customer?.email || quote.status !== 'declined') return
     await sendQuoteDeclinedEmail(quote.customer.email, quote)
+  })
+
+  // Three days after delivery: ask for a review, unless they already wrote one
+  // or opted out of these emails.
+  defineJob('email.reviewRequest', async ({ orderId }) => {
+    const order = await Order.findById(orderId).populate('customer', 'email marketingOptOut')
+    if (!order?.customer?.email || order.customer.marketingOptOut || order.status !== 'delivered') return
+    if (await Review.exists({ order: order._id })) return
+    await sendReviewRequestEmail(order.customer.email, order, `${config.storefrontUrl}/account?review=${order.orderNumber}`)
+  })
+
+  // A day after the cart last changed, if nothing was ordered since.
+  defineJob('email.abandonedCart', async ({ customerId }) => {
+    const customer = await Customer.findById(customerId)
+    const cart = customer?.cart
+    if (!customer || customer.marketingOptOut || !cart?.lines?.length || cart.remindedAt) return
+    if (Date.now() - new Date(cart.updatedAt).getTime() < 23 * 3_600_000) return // changed since — a newer job will run
+    if (await Order.exists({ customer: customer._id, createdAt: { $gte: cart.updatedAt } })) return
+    // Price from the database — the reminder never shows a stale price.
+    const lines = await priceItems(cart.lines).catch(() => null)
+    if (!lines?.length) return
+    await sendAbandonedCartEmail(customer.email, lines, `${config.storefrontUrl}/checkout`)
+    customer.cart.remindedAt = new Date()
+    await customer.save()
   })
 
   /**

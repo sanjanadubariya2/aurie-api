@@ -29,6 +29,15 @@ const customerSchema = new mongoose.Schema(
     // Bumped on "sign out everywhere" / password change — every token carrying
     // an older value stops working at once, without a token blacklist.
     tokenVersion: { type: Number, default: 0 },
+    wishlist: [String], // product slugs
+    // The signed-in customer's cart, mirrored from the browser so an
+    // abandoned-cart reminder can be sent. Prices are never stored here.
+    cart: {
+      lines: [{ _id: false, productId: String, tierId: String, count: Number, note: String }],
+      updatedAt: Date,
+      remindedAt: Date,
+    },
+    marketingOptOut: { type: Boolean, default: false }, // reminders/review asks off
     // Admin two-factor (TOTP). The secret is AES-GCM encrypted at rest.
     totpSecretEnc: String,
     totpEnabled: { type: Boolean, default: false },
