@@ -22,11 +22,31 @@ export const SHOP = Object.freeze({
   maxQuoteImages: 3,
 })
 
+/**
+ * Who is selling — printed on invoices and packing slips. Set these in the
+ * environment once the business details are final (they must match Razorpay
+ * KYC and, if registered, the GST certificate). GST_RATE is the percentage
+ * already included in prices (ask your CA: candles are HSN 3406); 0 means the
+ * invoice says "Bill of supply" with no tax breakup.
+ */
+export const BUSINESS = Object.freeze({
+  name: process.env.BUSINESS_NAME || 'Aurie',
+  legalName: process.env.BUSINESS_LEGAL_NAME || 'Aurie',
+  address: process.env.BUSINESS_ADDRESS || 'Mumbai, Maharashtra, India',
+  state: process.env.BUSINESS_STATE || 'Maharashtra',
+  gstin: process.env.BUSINESS_GSTIN || '',
+  email: process.env.BUSINESS_EMAIL || 'orders@aurie.website',
+  phone: process.env.BUSINESS_PHONE || '',
+  gstRate: Number(process.env.GST_RATE || 0),
+  hsn: process.env.HSN_CODE || '3406',
+})
+
 export function publicSettings() {
   return {
     ...SHOP,
     statusFlow: STATUS_FLOW,
     payments: { upi: true, cod: true, razorpayMode: isRazorpayLive ? 'live' : 'dev' },
+    business: BUSINESS,
     features: { ai: isAiLive, shiprocket: isShiprocketLive() },
   }
 }
