@@ -97,6 +97,11 @@ describe('customer sessions', () => {
     await api.get('/api/auth/me').set('Authorization', `Bearer ${token}`).expect(401)
   })
 
+  it('accepts the admin app on another localhost port in development', async () => {
+    await api.post('/api/admin/login').set('Origin', 'http://localhost:5174').send({ email: 'admin@test.aurie', password: 'admin-pass-123' }).expect(200)
+    await api.post('/api/auth/logout').set('Origin', 'http://127.0.0.1:5999').send({}).expect(200)
+  })
+
   it('blocks state-changing requests from unknown origins', async () => {
     await api.post('/api/auth/email/otp').set('Origin', 'https://evil.example').send({ email: 'x@test.aurie' }).expect(403)
   })

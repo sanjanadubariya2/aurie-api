@@ -1,4 +1,4 @@
-import { config } from '../config.js'
+import { isAllowedOrigin } from '../config.js'
 
 /**
  * Defence in depth for cookie sessions: a state-changing request that names an
@@ -10,6 +10,9 @@ import { config } from '../config.js'
 export function originCheck(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next()
   const origin = req.headers.origin
-  if (!origin || config.corsOrigins.includes(origin)) return next()
-  return res.status(403).json({ message: 'Request blocked: unknown origin.' })
+  if (!origin || isAllowedOrigin(origin)) return next()
+  req.log?.warn({ origin }, 'blocked request from an origin not in CORS_ORIGIN')
+  return res.status(403).json({
+    message: `Request blocked: ${origin} is not an allowed origin. Add it to CORS_ORIGIN in the API's environment.`,
+  })
 }

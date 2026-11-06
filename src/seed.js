@@ -26,15 +26,15 @@ async function seed() {
   let updated = 0
   for (const p of products) {
     const { id, collection, image, ...rest } = p
-    // eslint-disable-next-line no-await-in-loop
+     
     const existing = await Product.findOne({ slug: id })
 
     if (existing) {
-      // eslint-disable-next-line no-await-in-loop
+       
       await Product.updateOne({ slug: id }, { ...rest, collection_: collection })
       updated++
     } else {
-      // eslint-disable-next-line no-await-in-loop
+       
       await Product.create({ ...rest, slug: id, collection_: collection, image })
       inserted++
     }

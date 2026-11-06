@@ -99,19 +99,19 @@ export function registerJobs() {
     let paid = 0
     let cancelled = 0
     for (const order of stale) {
-      // eslint-disable-next-line no-await-in-loop
+       
       const payment = await fetchCapturedPayment(order.razorpayOrderId).catch((err) => {
         log.warn({ order: order.orderNumber, err: err.message }, 'razorpay lookup failed')
         return undefined // unknown — do not cancel on a failed lookup
       })
       if (payment) {
-        // eslint-disable-next-line no-await-in-loop
+         
         await markOrderPaid({ razorpayOrderId: order.razorpayOrderId, razorpayPaymentId: payment.id, by: 'reconcile-job' })
         paid++
       } else if (payment === null && order.createdAt.getTime() < cutoff) {
         order.status = 'cancelled'
         order.statusHistory.push({ status: 'cancelled', at: new Date(), by: 'system: payment never completed' })
-        // eslint-disable-next-line no-await-in-loop
+         
         await order.save()
         cancelled++
       }

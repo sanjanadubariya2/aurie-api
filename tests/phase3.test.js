@@ -179,7 +179,7 @@ describe('operations', () => {
   it('exports CSV safely', async () => {
     const res = await owner.get('/api/admin/orders/export.csv').expect(200)
     expect(res.headers['content-type']).toMatch(/text\/csv/)
-    const [header, first] = res.text.replace(/^﻿/, '').split('\r\n')
+    const [header, first] = res.text.replace(/^\uFEFF/, '').split('\r\n')
     expect(header).toMatch(/^"Order","Invoice"/)
     expect(first).toMatch(/^"AUR\d{6}"/)
   })

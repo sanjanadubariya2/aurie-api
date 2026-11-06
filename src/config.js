@@ -10,7 +10,7 @@ export const config = {
   port: Number(process.env.PORT || 4000),
   nodeEnv: process.env.NODE_ENV || 'development',
   isProd: process.env.NODE_ENV === 'production',
-  corsOrigins: (process.env.CORS_ORIGIN || 'http://localhost:5173')
+  corsOrigins: (process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:5174')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean),
@@ -97,6 +97,15 @@ export const isSmsLive = Boolean(
     (config.sms.provider === 'fast2sms' && config.sms.fast2sms.apiKey && config.sms.fast2sms.otpId) ||
     isWhatsAppOtpLive,
 )
+/**
+ * Is this browser origin one of our front ends? Production: only the exact
+ * CORS_ORIGIN list. Development: also any localhost port, so running the
+ * storefront and admin on whatever ports Vite picks never locks you out.
+ */
+const LOCALHOST = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/
+export const isAllowedOrigin = (origin) =>
+  Boolean(origin) && (config.corsOrigins.includes(origin) || (!config.isProd && LOCALHOST.test(origin)))
+
 export const isAiLive = Boolean(config.ai.geminiApiKey)
 export const isRazorpayLive = Boolean(config.razorpay.keyId && config.razorpay.keySecret)
 export const isCloudinaryLive = Boolean(

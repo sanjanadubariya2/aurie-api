@@ -199,7 +199,7 @@ router.get(
     await auditReq(req, 'orders.export', null, { from, to, count: orders.length })
     res.setHeader('Content-Type', 'text/csv; charset=utf-8')
     res.setHeader('Content-Disposition', `attachment; filename="aurie-orders-${req.query.from || 'last-31-days'}.csv"`)
-    res.send(`﻿${[header.map(csvCell).join(','), ...lines].join('\r\n')}`) // BOM so Excel reads ₹ correctly
+    res.send(`\uFEFF${[header.map(csvCell).join(','), ...lines].join('\r\n')}`) // BOM so Excel reads ₹ correctly
   }),
 )
 

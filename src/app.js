@@ -6,7 +6,7 @@ import cookieParser from 'cookie-parser'
 import rateLimit from 'express-rate-limit'
 import crypto from 'node:crypto'
 import { pinoHttp } from 'pino-http'
-import { config } from './config.js'
+import { isAllowedOrigin } from './config.js'
 import { logger } from './lib/logger.js'
 import { publicSettings } from './lib/settings.js'
 import { originCheck } from './middleware/originCheck.js'
@@ -51,7 +51,7 @@ export function createApp() {
   )
 
   app.use(helmet())
-  app.use(cors({ origin: config.corsOrigins, credentials: true }))
+  app.use(cors({ origin: (origin, cb) => cb(null, !origin || isAllowedOrigin(origin)), credentials: true }))
 
   // Razorpay's webhook needs the raw body for its HMAC check, so it is mounted
   // before express.json() consumes the stream.

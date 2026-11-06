@@ -324,7 +324,7 @@ async function uniqueSlugFrom(name, excludeId) {
   const base = slugify(name) || 'product'
   let slug = base
   let n = 2
-  // eslint-disable-next-line no-await-in-loop
+   
   while (await Product.exists({ slug, _id: { $ne: excludeId } })) {
     slug = `${base}-${n}`
     n++

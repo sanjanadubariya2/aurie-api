@@ -10,7 +10,7 @@ export function notFoundHandler(req, res) {
   res.status(404).json({ message: 'Not found' })
 }
 
-// eslint-disable-next-line no-unused-vars
+ 
 export function errorHandler(err, req, res, next) {
   if (err instanceof HttpError) {
     return res.status(err.status).json({ message: err.message })

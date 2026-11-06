@@ -68,7 +68,7 @@ const quoteSchema = z.object({
 async function quoteNumber() {
   for (let i = 0; i < 8; i++) {
     const n = `Q${crypto.randomInt(100000, 1_000_000)}`
-    // eslint-disable-next-line no-await-in-loop
+     
     if (!(await Quote.exists({ number: n }))) return n
   }
   throw new Error('Could not generate a quote number')
@@ -88,7 +88,7 @@ router.post(
     if (req.files?.length) {
       if (!isCloudinaryLive) throw new HttpError(503, 'Photo uploads are not available right now — send the request without them.')
       for (const file of req.files) {
-        // eslint-disable-next-line no-await-in-loop
+         
         const { secure_url: url, public_id: publicId } = await uploadImage(file.buffer, 'aurie/quotes')
         images.push({ url, publicId })
       }
