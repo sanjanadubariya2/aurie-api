@@ -162,6 +162,16 @@ router.get(
   }),
 )
 
+// One order — the print page (invoice + packing slip) needs the full document.
+router.get(
+  '/orders/:id',
+  asyncHandler(async (req, res) => {
+    const order = await Order.findById(req.params.id).populate('customer', 'email name phone').catch(() => null)
+    if (!order) throw new HttpError(404, 'Order not found')
+    res.json({ order })
+  }),
+)
+
 const orderUpdateSchema = z.object({
   status: z.enum(STATUSES).optional(),
   // aurie-admin sends `null` (not omitted) for these when its form fields are
