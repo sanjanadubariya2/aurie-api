@@ -18,7 +18,9 @@ import { uploadImage, destroyImage } from '../services/cloudinary.js'
 import { notifyStatusChange } from '../lib/orderEvents.js'
 import { publicCustomer } from '../lib/serialize.js'
 import { requireAdminSession } from '../middleware/requireAuth.js'
-import { requireAdmin } from '../middleware/requireAdmin.js'
+import { requireAdmin, requireOwner } from '../middleware/requireAdmin.js'
+import { auditReq } from '../lib/audit.js'
+import opsRouter from './adminOps.js'
 import { validateBody } from '../middleware/validate.js'
 import { asyncHandler } from '../middleware/errorHandler.js'
 import { HttpError } from '../lib/HttpError.js'
@@ -52,7 +54,7 @@ router.post(
   ),
   asyncHandler(async (req, res) => {
     const { email, password, code } = req.body
-    const admin = await Customer.findOne({ email, role: 'admin' })
+    const admin = await Customer.findOne({ email, role: { $in: ['admin', 'staff'] } })
     const ok = admin?.passwordHash && (await bcrypt.compare(password, admin.passwordHash))
     // One message for both failures — do not reveal which admin emails exist
     if (!ok) return res.status(401).json({ message: 'That email and password do not match.' })
@@ -77,6 +79,10 @@ router.post('/logout', (req, res) => {
 
 // Everything below here requires a signed-in admin.
 router.use(requireAdminSession, requireAdmin)
+
+// Prices and the catalogue are the owner's call; staff can look but not change.
+router.use('/products', (req, res, next) => (req.method === 'GET' ? next() : requireOwner(req, res, next)))
+router.use(opsRouter)
 
 // Lets the admin app confirm a stored token is still good on page load —
 // without this, refreshing any page silently signs the admin back out.
@@ -193,6 +199,11 @@ router.patch(
 
     // Fire and forget — a failed email must not fail the status update.
     if (statusChanged) await notifyStatusChange(order)
+    await auditReq(req, statusChanged ? 'order.status' : 'order.update', order.orderNumber, {
+      ...(statusChanged ? { status } : {}),
+      ...(courier ? { courier } : {}),
+      ...(trackingNumber ? { trackingNumber } : {}),
+    })
 
     res.json({ order })
   }),
@@ -264,6 +275,7 @@ router.patch(
     }
     await quote.save()
     await enqueue(req.body.action === 'quote' ? 'email.quoteReady' : 'email.quoteDeclined', { quoteId: quote._id.toString() })
+    await auditReq(req, `quote.${req.body.action}`, quote.number, req.body.action === 'quote' ? { price: quote.price } : { reason: quote.declineReason })
     res.json({ quote: toPublicQuote(quote) })
   }),
 )
@@ -352,6 +364,7 @@ router.post(
       collection_: collection,
       active: resolveActive(req.body, true),
     })
+    await auditReq(req, 'product.create', product.slug)
     res.status(201).json({ product: toAdminProduct(product) })
   }),
 )
@@ -366,8 +379,15 @@ router.patch(
     if (slug) patch.slug = slug
     if (active !== undefined || inStock !== undefined) patch.active = resolveActive(req.body)
 
+    const before = await Product.findById(req.params.id).lean().catch(() => null)
     const product = await Product.findByIdAndUpdate(req.params.id, patch, { new: true })
     if (!product) throw new HttpError(404, 'Product not found')
+    // Price changes are the ones worth being able to trace later.
+    const priceChange = JSON.stringify(before?.tiers?.map((t) => t.price)) !== JSON.stringify(product.tiers.map((t) => t.price))
+    await auditReq(req, 'product.update', product.slug, {
+      fields: Object.keys(patch),
+      ...(priceChange ? { pricesBefore: before?.tiers?.map((t) => `${t.id}:${t.price}`), pricesAfter: product.tiers.map((t) => `${t.id}:${t.price}`) } : {}),
+    })
     res.json({ product: toAdminProduct(product) })
   }),
 )
@@ -382,6 +402,7 @@ router.delete(
     const product = await Product.findByIdAndDelete(req.params.id)
     if (!product) throw new HttpError(404, 'Product not found')
     if (product.imagePublicId) await destroyImage(product.imagePublicId)
+    await auditReq(req, 'product.delete', product.slug)
     res.json({ product: toAdminProduct(product) })
   }),
 )

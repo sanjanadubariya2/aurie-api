@@ -67,7 +67,26 @@ const orderSchema = new mongoose.Schema(
     // is the fulfilment/delivery lifecycle. A COD order can be `placed` while
     // staying `paymentStatus: 'pending'` forever; that's expected, COD never
     // touches this.
-    paymentStatus: { type: String, enum: ['pending', 'paid', 'failed'], default: 'pending' },
+    paymentStatus: { type: String, enum: ['pending', 'paid', 'failed', 'refunded', 'partially_refunded'], default: 'pending' },
+    // Razorpay refunds against this order's payment. Amounts in rupees.
+    refunds: [
+      {
+        _id: false,
+        refundId: String,
+        amount: Number,
+        status: { type: String, enum: ['pending', 'processed', 'failed'], default: 'pending' },
+        reason: String,
+        by: String,
+        at: Date,
+      },
+    ],
+    refundedTotal: { type: Number, default: 0 },
+    // GST invoice number, consecutive per financial year — assigned once the
+    // order is real (COD placed, or UPI paid). e.g. AUR/26-27/00042
+    invoiceNumber: { type: String, unique: true, sparse: true },
+    invoicedAt: Date,
+    // Shiprocket references, when shipping is booked through it.
+    shiprocket: { orderId: String, shipmentId: String, awb: String, labelUrl: String },
     razorpayOrderId: { type: String, index: true },
     razorpayPaymentId: String,
     status: { type: String, enum: STATUSES, default: 'placed', index: true },
@@ -92,6 +111,9 @@ export function toPublicOrder(doc) {
     address: o.address,
     payment: o.payment.method, // the frontend reads `order.payment` as a plain 'upi' | 'cod' string
     paymentStatus: o.paymentStatus || 'pending',
+    refundedTotal: o.refundedTotal || 0,
+    invoiceNumber: o.invoiceNumber || null,
+    canCancel: o.status === 'placed',
     subtotal: o.subtotal,
     shipping: o.shipping,
     giftWrapFee: o.giftWrapFee || 0,

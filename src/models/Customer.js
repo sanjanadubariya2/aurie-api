@@ -21,7 +21,9 @@ const customerSchema = new mongoose.Schema(
     name: String,
     phone: String,
     phoneVerified: { type: Boolean, default: false },
-    role: { type: String, enum: ['customer', 'admin'], default: 'customer' },
+    // admin = owner (everything). staff = day-to-day fulfilment: orders, the
+    // pour list and requests — but not prices, refunds, exports or staff.
+    role: { type: String, enum: ['customer', 'admin', 'staff'], default: 'customer' },
     passwordHash: String, // admins only — customers never get one
     addresses: [addressSchema],
     // Bumped on "sign out everywhere" / password change — every token carrying

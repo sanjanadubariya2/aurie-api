@@ -38,6 +38,14 @@ router.post(
       // Razorpay retries webhooks until it gets a 200 — markOrderPaid is a
       // no-op for an order that is already paid, so a retry changes nothing.
       await markOrderPaid({ razorpayOrderId, razorpayPaymentId, by: 'razorpay-webhook' })
+    } else if (event.event === 'refund.processed' || event.event === 'refund.failed') {
+      const refund = event.payload?.refund?.entity
+      if (refund?.id) {
+        await Order.updateOne(
+          { 'refunds.refundId': refund.id },
+          { $set: { 'refunds.$.status': event.event === 'refund.processed' ? 'processed' : 'failed' } },
+        )
+      }
     } else if (event.event === 'payment.failed' && razorpayOrderId) {
       const order = await Order.findOne({ razorpayOrderId })
       // Never downgrade a payment that's already captured — a failed event

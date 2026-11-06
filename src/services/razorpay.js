@@ -69,3 +69,19 @@ export async function fetchCapturedPayment(razorpayOrderId) {
   const { items = [] } = await razorpay.orders.fetchPayments(razorpayOrderId)
   return items.find((p) => p.status === 'captured') || null
 }
+
+/**
+ * Refunds (part of) a captured payment. `amountInRupees` omitted = full refund.
+ * Dev mode (no keys) fabricates a processed refund so the flow is testable.
+ */
+export async function refundPayment({ razorpayPaymentId, amountInRupees, notes = {} }) {
+  if (!isRazorpayLive || !razorpayPaymentId || razorpayPaymentId.startsWith('pay_dev')) {
+    return { id: `rfnd_dev_${crypto.randomBytes(6).toString('hex')}`, status: 'processed', amount: Math.round((amountInRupees || 0) * 100) }
+  }
+  const razorpay = await getClient()
+  return razorpay.payments.refund(razorpayPaymentId, {
+    ...(amountInRupees ? { amount: Math.round(amountInRupees * 100) } : {}),
+    speed: 'normal',
+    notes,
+  })
+}

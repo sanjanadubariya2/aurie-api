@@ -1,5 +1,6 @@
 import Order from '../models/Order.js'
 import Quote from '../models/Quote.js'
+import { assignInvoiceNumber } from './invoice.js'
 import { enqueue } from '../jobs/queue.js'
 import { logger } from './logger.js'
 
@@ -48,6 +49,7 @@ export async function markOrderPaid({ razorpayOrderId, razorpayPaymentId, custom
   }
 
   const updated = await Order.findOneAndUpdate({ _id: order._id, paymentStatus: { $ne: 'paid' } }, update, { new: true })
+  if (updated && updated.status !== 'cancelled') await assignInvoiceNumber(updated._id)
   if (updated?.quote) {
     // The custom quote this order paid for is now settled.
     await Quote.updateOne({ _id: updated.quote }, { $set: { status: 'paid', order: updated._id } })

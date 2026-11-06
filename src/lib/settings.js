@@ -1,5 +1,6 @@
 import { STATUS_FLOW } from '../models/Order.js'
 import { isRazorpayLive, isAiLive } from '../config.js'
+import { isShiprocketLive } from '../services/shiprocket.js'
 
 /**
  * The shop's business rules, defined once. createOrder.js prices with these,
@@ -26,6 +27,6 @@ export function publicSettings() {
     ...SHOP,
     statusFlow: STATUS_FLOW,
     payments: { upi: true, cod: true, razorpayMode: isRazorpayLive ? 'live' : 'dev' },
-    features: { ai: isAiLive },
+    features: { ai: isAiLive, shiprocket: isShiprocketLive() },
   }
 }
