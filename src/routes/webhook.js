@@ -2,6 +2,7 @@ import { Router } from 'express'
 import express from 'express'
 import Order from '../models/Order.js'
 import { verifyWebhookSignature } from '../services/razorpay.js'
+import { markOrderPaid } from '../lib/orderEvents.js'
 import { asyncHandler } from '../middleware/errorHandler.js'
 
 /**
@@ -33,18 +34,10 @@ router.post(
     const razorpayOrderId = event.payload?.payment?.entity?.order_id
     const razorpayPaymentId = event.payload?.payment?.entity?.id
 
-    if (event.event === 'payment.captured' && razorpayOrderId) {
-      const order = await Order.findOne({ razorpayOrderId })
-      // Razorpay retries webhooks until it gets a 200 — an order that's
-      // already paid means this is a retry of one we already processed.
-      // Re-applying it would be harmless here, but the guard is what makes
-      // that a guarantee rather than a coincidence, and cheaper than a write.
-      if (order && order.paymentStatus !== 'paid') {
-        order.paymentStatus = 'paid'
-        order.razorpayPaymentId = razorpayPaymentId
-        order.status = 'placed'
-        await order.save()
-      }
+    if ((event.event === 'payment.captured' || event.event === 'order.paid') && razorpayOrderId) {
+      // Razorpay retries webhooks until it gets a 200 — markOrderPaid is a
+      // no-op for an order that is already paid, so a retry changes nothing.
+      await markOrderPaid({ razorpayOrderId, razorpayPaymentId, by: 'razorpay-webhook' })
     } else if (event.event === 'payment.failed' && razorpayOrderId) {
       const order = await Order.findOne({ razorpayOrderId })
       // Never downgrade a payment that's already captured — a failed event

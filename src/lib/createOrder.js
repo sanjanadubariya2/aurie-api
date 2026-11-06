@@ -43,7 +43,10 @@ export async function priceItems(items) {
 
   return items.map((item) => {
     const product = bySlug.get(item.productId)
-    if (!product || !product.active) throw new HttpError(400, `That item is no longer available.`)
+    if (!product || !product.active) {
+      throw new HttpError(400, `${product?.name || 'An item in your cart'} is no longer available. Remove it and try again.`)
+    }
+    if (product.quote) throw new HttpError(400, `${product.name} is priced on request. Message us for a quote.`)
 
     const tier = product.tiers.find((t) => t.id === item.tierId)
     if (!tier) throw new HttpError(400, `Choose a valid size for ${product.name}.`)
@@ -65,19 +68,27 @@ export async function priceItems(items) {
 /** Prices a cart and creates the Order document. Shared by the plain COD/UPI
  *  checkout (routes/orders.js) and the Razorpay flow (routes/payments.js) so
  *  there is exactly one place that decides what something costs. */
+export const FREE_SHIPPING_FROM = 999
+export const SHIPPING_FEE = 79
+export const COD_LIMIT = 2000
+
 export async function createOrderFromCart({ customer, items, address, payment }) {
   const lines = await priceItems(items)
   const subtotal = lines.reduce((sum, l) => sum + l.unitPrice * l.count, 0)
-  const shipping = subtotal >= 999 ? 0 : 79
+  const shipping = subtotal >= FREE_SHIPPING_FROM ? 0 : SHIPPING_FEE
   const total = subtotal + shipping
 
-  if (payment === 'cod' && total > 2000) {
+  if (payment === 'cod' && total > COD_LIMIT) {
     throw new HttpError(400, 'Cash on delivery is not available above ₹2,000. Pay by UPI instead.')
   }
 
   const orderNumber = await generateOrderNumber()
   const expectedBy = new Date()
   expectedBy.setDate(expectedBy.getDate() + 7) // 4 days to pour and cure, 3 to ship
+
+  // A UPI order is only a real order once Razorpay confirms the money — until
+  // then it waits outside the fulfilment flow (see STATUSES in models/Order.js).
+  const status = payment === 'upi' ? 'awaiting_payment' : 'placed'
 
   return Order.create({
     orderNumber,
@@ -89,8 +100,8 @@ export async function createOrderFromCart({ customer, items, address, payment })
     total,
     payment: { method: payment },
     paymentStatus: 'pending',
-    status: 'placed',
-    statusHistory: [{ status: 'placed', at: new Date(), by: customer.email }],
+    status,
+    statusHistory: [{ status, at: new Date(), by: customer.email }],
     expectedBy,
   })
 }

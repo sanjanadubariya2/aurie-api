@@ -41,8 +41,12 @@ Fill in the real keys in `.env` when you have them; nothing else changes.
 ## Auth model
 
 - **Customers** sign in with an email OTP only — first verified code creates
-  the account. Phone OTP (`POST /api/auth/phone/otp|verify`) runs behind
-  that session and just marks the number verified for delivery calls.
+  the account. Sending is limited per email (5/hour) and loosely per IP, and
+  each code allows 5 guesses. Phone OTP routes exist but checkout does not use
+  them until an SMS/WhatsApp provider is configured.
+- **Email** goes out through Resend or SMTP (`EMAIL_PROVIDER` picks the first
+  choice). If both are configured and the first fails, the other is tried.
+  SMTP mail is sent from `SMTP_USER`, since Gmail rejects other From addresses.
 - **Admins** get a password (`npm run create-admin`) and sign in at
   `POST /api/admin/login`. Every other `/api/admin/*` route requires that
   token *and* `role: 'admin'`.
@@ -50,6 +54,17 @@ Fill in the real keys in `.env` when you have them; nothing else changes.
   `Authorization: Bearer <token>` — `requireAuth` accepts that, and also
   reads an httpOnly `token` cookie if you switch to that later (see
   `BACKEND.md` §5 for the trade-off).
+
+## Orders and payment status
+
+- COD: `POST /api/orders` → `placed` immediately, confirmation email sent.
+- UPI: `POST /api/payments/order` → `awaiting_payment` (hidden from the
+  customer's list and the admin queue) → `placed` once `/payments/verify` or the
+  Razorpay webhook confirms it. The confirmation email is sent exactly once.
+- Admin status changes are validated here, not just in the UI: one step forward
+  at a time, courier + tracking required from `shipped`, `cancelled` is final.
+- `npm run fix-unpaid-upi` lists (and with `-- --apply` fixes) old unpaid UPI
+  orders that were saved as `placed` before `awaiting_payment` existed.
 
 ## Money
 
@@ -63,12 +78,15 @@ order amount. Don't change this without re-reading `BACKEND.md` §3/§6.
 - `GET/PATCH /api/admin/orders` — list and update status/courier/tracking.
   A status change fires a best-effort confirmation email (never blocks the
   update if the email fails).
-- `GET/POST/PATCH/DELETE /api/admin/products` — catalogue CRUD. Delete is a
-  soft-delete (`active: false`) so past orders keep their snapshot intact.
-- `POST /api/admin/uploads` — multipart `image` field, returns a Cloudinary
-  URL to paste into a product's `image`.
-- `GET /api/admin/stats` — revenue/orders totals, a 30-day daily revenue
-  series, and the top 5 products by revenue.
+- `GET/POST/PATCH/DELETE /api/admin/products` — catalogue CRUD. Hiding sets
+  `active: false`; delete is permanent, which is safe because past orders keep
+  their own name/image/price snapshot. Quote-only products (`quote: true`)
+  need no sizes.
+- `GET /api/admin/collections` — the collection list the product form uses.
+- `POST /api/admin/products/:id/image` — multipart `image` field, uploads to
+  Cloudinary and replaces the product's image.
+- `GET /api/admin/stats` — 14-day revenue (IST days; cancelled and unpaid UPI
+  excluded), order count, COD share and top 5 products by units.
 
 ## Before going live
 

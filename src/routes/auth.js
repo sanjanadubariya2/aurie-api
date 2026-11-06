@@ -14,13 +14,29 @@ import { asyncHandler } from '../middleware/errorHandler.js'
 
 const router = Router()
 
-// Three sends per IP per fifteen minutes, or the SMS/email bill becomes someone
-// else's toy. Separate instances for email and phone — sharing one would mean
-// checking out (which sends a phone OTP) could lock a customer out of signing
-// back in later, since express-rate-limit counts hits per middleware instance.
-const makeOtpLimiter = () => rateLimit({ windowMs: 15 * 60_000, max: 3, standardHeaders: true, legacyHeaders: false })
-const emailOtpLimiter = makeOtpLimiter()
-const phoneOtpLimiter = makeOtpLimiter()
+// Two layers of limits on sending codes:
+//  - per IP, loose: Indian mobile carriers put many customers behind one
+//    shared IP (CGNAT), so a tight per-IP cap locks out strangers.
+//  - per email/phone, tight: this is what actually stops someone flooding one
+//    inbox or brute-forcing by requesting fresh codes from many IPs.
+// Separate instances for email and phone — express-rate-limit counts hits per
+// middleware instance, and checkout must never use up the sign-in allowance.
+const limitOpts = { standardHeaders: true, legacyHeaders: false }
+const tooMany = (what) => ({ message: `Too many codes requested for this ${what}. Wait a few minutes and try again.` })
+const ipOtpLimiter = () => rateLimit({ ...limitOpts, windowMs: 15 * 60_000, max: 20 })
+const identifierLimiter = (field) =>
+  rateLimit({
+    ...limitOpts,
+    windowMs: 60 * 60_000,
+    max: 5,
+    keyGenerator: (req) => `${field}:${String(req.body?.[field] || '').toLowerCase().trim()}`,
+    message: tooMany(field === 'email' ? 'email' : 'number'),
+  })
+const emailOtpLimiter = [ipOtpLimiter(), identifierLimiter('email')]
+const phoneOtpLimiter = [ipOtpLimiter(), identifierLimiter('phone')]
+// Wrong guesses: 5 per code (services/otp.js), and at most 15 verify calls per
+// IP per 15 minutes so a fresh-code-per-5-guesses loop stays slow.
+const verifyLimiter = rateLimit({ ...limitOpts, windowMs: 15 * 60_000, max: 15 })
 
 const emailSchema = z.object({ email: z.string().trim().toLowerCase().email('Enter a valid email address') })
 const emailVerifySchema = emailSchema.extend({ code: z.string().trim().length(6, 'Enter the 6-digit code') })
@@ -47,6 +63,7 @@ router.post(
 
 router.post(
   '/email/verify',
+  verifyLimiter,
   validateBody(emailVerifySchema),
   asyncHandler(async (req, res) => {
     const { email, code } = req.body
@@ -92,6 +109,7 @@ router.post(
 router.post(
   '/phone/verify',
   requireAuth,
+  verifyLimiter,
   validateBody(phoneVerifySchema),
   asyncHandler(async (req, res) => {
     const { phone, code } = req.body

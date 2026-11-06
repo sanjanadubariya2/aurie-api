@@ -32,7 +32,13 @@ const addressSchema = new mongoose.Schema(
 )
 
 export const STATUS_FLOW = ['placed', 'confirmed', 'shipped', 'out_for_delivery', 'delivered']
-export const STATUSES = [...STATUS_FLOW, 'cancelled']
+// `awaiting_payment` is a UPI order whose Razorpay payment has not been
+// verified yet. It is deliberately outside STATUS_FLOW: it never shows in the
+// customer's order list or the admin queue until the money is confirmed, so an
+// abandoned payment can no longer look like a real order that needs pouring.
+export const STATUSES = [...STATUS_FLOW, 'cancelled', 'awaiting_payment']
+/** Statuses that need a courier + tracking number before they can be set. */
+export const TRACKED_STATUSES = ['shipped', 'out_for_delivery', 'delivered']
 
 const orderSchema = new mongoose.Schema(
   {
@@ -58,6 +64,9 @@ const orderSchema = new mongoose.Schema(
     courier: String,
     trackingNumber: String,
     expectedBy: Date,
+    // Set once the "order confirmed" email has gone out, so the Razorpay
+    // verify call and the webhook (which can both land) never send it twice.
+    confirmationSentAt: Date,
   },
   { timestamps: true },
 )
@@ -71,6 +80,7 @@ export function toPublicOrder(doc) {
     items: o.items,
     address: o.address,
     payment: o.payment.method, // the frontend reads `order.payment` as a plain 'upi' | 'cod' string
+    paymentStatus: o.paymentStatus || 'pending',
     total: o.total,
     status: o.status,
     trackingNumber: o.trackingNumber || null,

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import Order, { toPublicOrder } from '../models/Order.js'
 import { addressSchema, itemsSchema, createOrderFromCart } from '../lib/createOrder.js'
 import { createRazorpayOrder, verifyPaymentSignature } from '../services/razorpay.js'
+import { markOrderPaid } from '../lib/orderEvents.js'
 import { requireAuth } from '../middleware/requireAuth.js'
 import { validateBody } from '../middleware/validate.js'
 import { asyncHandler } from '../middleware/errorHandler.js'
@@ -75,12 +76,10 @@ router.post(
       throw new HttpError(400, 'Payment could not be verified')
     }
 
-    order.paymentStatus = 'paid'
-    order.razorpayPaymentId = razorpayPaymentId
-    order.status = 'placed'
-    await order.save()
-
-    res.json({ order: toPublicOrder(order) })
+    // If the webhook got there first this returns null — re-read either way.
+    await markOrderPaid({ razorpayOrderId, razorpayPaymentId, customerId: req.customer._id, by: req.customer.email })
+    const fresh = await Order.findById(order._id)
+    res.json({ order: toPublicOrder(fresh) })
   }),
 )
 

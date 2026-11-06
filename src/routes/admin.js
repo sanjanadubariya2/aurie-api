@@ -4,7 +4,8 @@ import bcrypt from 'bcryptjs'
 import rateLimit from 'express-rate-limit'
 import { z } from 'zod'
 import Customer from '../models/Customer.js'
-import Order, { STATUSES } from '../models/Order.js'
+import Order, { STATUSES, STATUS_FLOW, TRACKED_STATUSES } from '../models/Order.js'
+import CollectionModel, { toPublicCollection } from '../models/Collection.js'
 import Product, { toAdminProduct } from '../models/Product.js'
 import { signToken } from '../services/token.js'
 import { uploadImage, destroyImage } from '../services/cloudinary.js'
@@ -61,8 +62,11 @@ router.get(
   '/orders',
   asyncHandler(async (req, res) => {
     const page = Math.max(1, Number(req.query.page) || 1)
-    const limit = Math.min(100, Number(req.query.limit) || 25)
-    const filter = req.query.status ? { status: req.query.status } : {}
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25))
+    const status = String(req.query.status || '')
+    // Unpaid UPI attempts stay out of the default list — they are not orders
+    // to fulfil. Ask for ?status=awaiting_payment explicitly to see them.
+    const filter = STATUSES.includes(status) ? { status } : { status: { $ne: 'awaiting_payment' } }
 
     const [orders, total] = await Promise.all([
       Order.find(filter)
@@ -94,20 +98,56 @@ router.patch(
     const order = await Order.findById(req.params.id).populate('customer', 'email')
     if (!order) throw new HttpError(404, 'Order not found')
 
-    if (status) {
+    const statusChanged = Boolean(status) && status !== order.status
+    if (statusChanged) assertTransition(order, status)
+
+    if (courier) order.courier = courier
+    if (trackingNumber) order.trackingNumber = trackingNumber
+
+    const nextStatus = status || order.status
+    if (TRACKED_STATUSES.includes(nextStatus) && (!order.courier || !order.trackingNumber)) {
+      // The customer's tracking page shows both — never let one go out blank.
+      throw new HttpError(400, 'Add the courier and tracking number before marking this shipped.')
+    }
+
+    if (statusChanged) {
       order.status = status
       order.statusHistory.push({ status, at: new Date(), by: req.customer.email })
     }
-    if (courier) order.courier = courier
-    if (trackingNumber) order.trackingNumber = trackingNumber
     await order.save()
 
     // Fire and forget — a failed email must not fail the status update.
-    if (status && order.customer?.email) {
-      sendOrderStatusEmail(order.customer.email, order).catch(console.error)
+    if (statusChanged && order.customer?.email) {
+      sendOrderStatusEmail(order.customer.email, order).catch((err) => console.error('Status email failed:', err.message))
     }
 
     res.json({ order })
+  }),
+)
+
+/** The same rules the admin drawer shows, enforced where they cannot be skipped. */
+function assertTransition(order, next) {
+  const from = order.status
+  if (from === 'cancelled') throw new HttpError(400, 'This order is cancelled and cannot be changed.')
+  if (next === 'awaiting_payment') throw new HttpError(400, 'An order cannot be moved back to awaiting payment.')
+  if (next === 'cancelled') {
+    if (from === 'delivered') throw new HttpError(400, 'A delivered order cannot be cancelled.')
+    return
+  }
+  if (from === 'awaiting_payment') {
+    throw new HttpError(400, 'This UPI payment was never confirmed. Cancel it, or wait for Razorpay to confirm it.')
+  }
+  const fromIndex = STATUS_FLOW.indexOf(from)
+  const toIndex = STATUS_FLOW.indexOf(next)
+  if (toIndex > fromIndex + 1) throw new HttpError(400, 'Move the order forward one step at a time.')
+}
+
+// ---------------------------------------------------------- collections ---
+router.get(
+  '/collections',
+  asyncHandler(async (req, res) => {
+    const collections = await CollectionModel.find().sort({ order: 1 })
+    res.json({ collections: collections.map(toPublicCollection) })
   }),
 )
 
@@ -179,6 +219,7 @@ router.post(
   validateBody(productSchema),
   asyncHandler(async (req, res) => {
     const { collection, active, inStock, slug, ...rest } = req.body
+    if (!rest.quote && !rest.tiers.length) throw new HttpError(400, 'Add at least one size, or mark it as priced on request.')
     const product = await Product.create({
       ...rest,
       slug: slug || (await uniqueSlugFrom(req.body.name)),
@@ -251,11 +292,15 @@ router.get(
   '/stats',
   asyncHandler(async (req, res) => {
     const DAYS = 14
+    const TZ = 'Asia/Kolkata' // the shop's day, not UTC — a 1am IST order belongs to today
     const since = new Date(Date.now() - DAYS * 86_400_000)
-    // Counts as revenue: a Razorpay-verified payment, or a COD order (which
-    // has no Razorpay-verified paymentStatus to check — COD is cash on the
-    // doorstep, not something this app watches get paid).
-    const paid = { $or: [{ paymentStatus: 'paid' }, { 'payment.method': 'cod' }] }
+    // Counts as revenue: a Razorpay-verified payment, or a live COD order (cash
+    // on the doorstep — nothing this app watches get paid). Cancelled orders
+    // and unpaid UPI attempts never count.
+    const paid = {
+      status: { $nin: ['cancelled', 'awaiting_payment'] },
+      $or: [{ paymentStatus: 'paid' }, { 'payment.method': 'cod' }],
+    }
 
     const recentCount = await Order.countDocuments({ ...paid, createdAt: { $gte: since } })
     const basis = recentCount > 0 ? { ...paid, createdAt: { $gte: since } } : paid
@@ -265,15 +310,11 @@ router.get(
       Order.countDocuments({ status: { $in: ['placed', 'confirmed'] } }),
       Order.countDocuments({ ...basis, 'payment.method': { $ne: 'upi' } }),
       Order.aggregate([
-        { $match: { createdAt: { $gte: since } } },
+        { $match: { ...paid, createdAt: { $gte: since } } },
         {
           $group: {
-            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-            revenue: {
-              $sum: {
-                $cond: [{ $or: [{ $eq: ['$paymentStatus', 'paid'] }, { $eq: ['$payment.method', 'cod'] }] }, '$total', 0],
-              },
-            },
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: TZ } },
+            revenue: { $sum: '$total' },
             orders: { $sum: 1 },
           },
         },
@@ -291,7 +332,7 @@ router.get(
     const revenue = totals[0]?.revenue || 0
     const dayMap = new Map(dayRows.map((d) => [d._id, d]))
     const days = Array.from({ length: DAYS }).map((_, i) => {
-      const date = new Date(Date.now() - (DAYS - 1 - i) * 86_400_000).toISOString().slice(0, 10)
+      const date = new Date(Date.now() - (DAYS - 1 - i) * 86_400_000).toLocaleDateString('en-CA', { timeZone: TZ })
       const row = dayMap.get(date)
       return { date, revenue: row?.revenue || 0, orders: row?.orders || 0 }
     })

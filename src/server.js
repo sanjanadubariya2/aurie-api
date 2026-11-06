@@ -1,9 +1,11 @@
 import express from 'express'
+import mongoose from 'mongoose'
 import helmet from 'helmet'
 import cors from 'cors'
 import cookieParser from 'cookie-parser'
 import rateLimit from 'express-rate-limit'
-import { config } from './config.js'
+import { config, isRazorpayLive, isCloudinaryLive } from './config.js'
+import { emailConfigured } from './services/mailer.js'
 import { connectDb } from './db.js'
 import { notFoundHandler, errorHandler } from './middleware/errorHandler.js'
 import webhookRouter from './routes/webhook.js'
@@ -40,7 +42,12 @@ app.use(cookieParser())
 // A generous ceiling on top of the tighter per-route limits (OTP, admin login).
 app.use('/api', rateLimit({ windowMs: 60_000, max: 120, standardHeaders: true, legacyHeaders: false }))
 
-app.get('/health', (req, res) => res.json({ ok: true }))
+// Reports the database too — a host's health check should fail (and restart
+// the app) when Mongo is unreachable, not keep routing traffic to it.
+app.get('/health', (req, res) => {
+  const db = mongoose.connection.readyState === 1
+  res.status(db ? 200 : 503).json({ ok: db, db })
+})
 
 app.use('/api/auth', authRouter)
 app.use('/api', catalogRouter) // GET /api/products, GET /api/collections
@@ -53,7 +60,14 @@ app.use(errorHandler)
 
 async function start() {
   await connectDb()
-  app.listen(config.port, () => console.log(`aurie-api listening on :${config.port}`))
+  app.listen(config.port, () => {
+    console.log(`aurie-api listening on :${config.port}`)
+    console.log(
+      `  email: ${emailConfigured() ? config.email.provider + ' (with fallback if both set)' : 'console only'}` +
+        ` · razorpay: ${isRazorpayLive ? (config.razorpay.keyId.startsWith('rzp_live') ? 'LIVE keys' : 'test keys') : 'dev stub'}` +
+        ` · cloudinary: ${isCloudinaryLive ? 'on' : 'off'} · cors: ${config.corsOrigins.join(', ')}`,
+    )
+  })
 }
 
 start().catch((err) => {
